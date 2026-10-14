@@ -49,13 +49,16 @@ coverage.xml
 .pytest_cache/
 cover/
 
-# Virtual environments
+# Virtual environments & uv
+.venv/
 .venv
 venv/
 ENV/
 env/
 env.bak/
 venv.bak/
+.uv/
+.python-version
 
 # IDE & Editors
 .vscode/
@@ -66,7 +69,7 @@ venv.bak/
 # macOS / System
 .DS_Store
 
-# Output directories created by pcap2quiz execution
-*.html
-*_aiken.txt
-EOF
+# vissho cache & local output
+.vissho_cache/
+*.xlsx
+config.yaml
