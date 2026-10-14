@@ -1,0 +1,32 @@
+[project]
+name = "vissho"
+version = "0.1.0"
+description = "Instruction plan creation assistant powered by vision LLMs"
+readme = "README.md"
+authors = [
+    { name = "Yasumichi Akahoshi", email = "sekiseijuju@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "jinja2>=3.1.6",
+    "ollama>=0.6.3",
+    "openpyxl>=3.1.5",
+    "pillow>=12.3.0",
+    "pydantic>=2.14.1",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+vissho = "vissho.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
