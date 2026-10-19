@@ -50,8 +50,12 @@
   - スライド画像からの主題、トピック、重要ポイント、学習活動、所要時間目安、留意点・暗黙知の抽出
   - 差分実行（キャッシュヒット時は推論スキップ）と完全なトレーサビリティ情報の保持
   - CLI コマンド `vissho analyze` による進捗表示（Rich Progress）と結果サマリー表の表示
-- [x] **ユニットテスト**: 全 32 件パス、テストカバレッジ 92%
-- [ ] **Phase 2: コマ割りマッピングエンジン (`SessionMapper`)**
+- [x] **Phase 2: コマ割りマッピングエンジン (`SessionMapper`)**: [`src/vissho/pipeline/phase2_map.py`](./src/vissho/pipeline/phase2_map.py)
+  - スライド解析結果を設定（前提条件、コマ数、時間、列定義）に基づき全コマへ教育的・論理的に配分
+  - 各行への出典スライド番号（トレーサビリティ）の付与および補足暗黙知の反映
+  - 各コマの合計配当時間の決定論的整合性補正（各行の `allocated_minutes` の合算値と同期）
+  - CLI コマンド `vissho map` による全コマ指導案テーブル（Rich Table）表示および JSON 出力
+- [x] **ユニットテスト**: 全 39 件パス、テストカバレッジ 90%（`phase2_map.py` は 100%）
 - [ ] **Phase 3: 全体整合・推敲エンジン (`ConsistencyReviewer`)**
 - [ ] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
 
@@ -159,6 +163,25 @@ uv run vissho analyze slides/
 - `-p, --pattern <glob>`: 対象画像のマッチパターン（デフォルト: `*.png`）
 - `--no-cache`: 既存キャッシュを無視して強制的に再解析
 - `--cache-dir <dir>`: キャッシュ保存先ディレクトリ（デフォルト: `.vissho_cache`）
+
+### 5.4 コマ割りマッピング (`vissho map`)
+
+解析済みのスライド要素を設定ファイル（コマ数、配当時間、出力列定義）に従って全コマに構造化・配分し、各コマの指導案テーブルを表示します。
+
+```bash
+# ターミナル上で全コマの指導案テーブルを表示
+uv run vissho map slides/
+
+# 生成された構造化カリキュラム指導案を JSON ファイルに保存
+uv run vissho map slides/ -o output/curriculum_plan.json
+```
+
+主なオプション：
+- `-c, --config <path>`: 設定ファイルのパス（デフォルト: `config.yaml`）
+- `-m, --model <model>`: 使用する Ollama モデル（デフォルト: `qwen2.5-vl`）
+- `-p, --pattern <glob>`: 対象画像のマッチパターン（デフォルト: `*.png`）
+- `--cache-dir <dir>`: キャッシュ保存先ディレクトリ（デフォルト: `.vissho_cache`）
+- `-o, --output <path>`: 生成されたカリキュラム指導案 JSON の出力先パス
 
 ---
 
