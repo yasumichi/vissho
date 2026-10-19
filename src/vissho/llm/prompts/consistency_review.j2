@@ -1,0 +1,72 @@
+あなたは授業設計（インストラクショナルデザイン）とカリキュラム推敲の専門家です。
+作成された「学習指導案ドラフト」に対し、プログラムによる「自動検証結果（時間の過不足やスライド網羅性の指摘）」および「教育的な妥当性・難易度曲線」の観点から推敲・整合化を行い、完成された学習指導案を出力してください。
+
+【授業の前提情報】
+- 講座の目的: {{ prerequisites.purpose }}
+- 対象受講生: {{ prerequisites.target_audience }}
+{% if prerequisites.prerequisite_knowledge %}
+- 前提知識: {{ prerequisites.prerequisite_knowledge }}
+{% endif %}
+- 全コマ数: {{ prerequisites.total_sessions }} コマ
+- 1コマあたりの時間: {{ prerequisites.session_minutes }} 分 (合計: {{ prerequisites.total_minutes }} 分)
+{% if prerequisites.rubric %}
+- ルーブリック評価基準:
+{% for item in prerequisites.rubric %}
+  * [評価 {{ item.grade }}]: {{ item.criteria }}
+{% endfor %}
+{% endif %}
+
+【出力する指導案表の列定義】
+{% for col in columns %}
+- **{{ col.name }}**: {{ col.description }}
+{% endfor %}
+
+【現在の指導案ドラフト】
+{% for session in curriculum_plan.sessions %}
+=== 第{{ session.session_number }}コマ: {{ session.session_title }} (計 {{ session.total_minutes }}分) ===
+{% for row in session.rows %}
+- [配当 {{ row.allocated_minutes }}分 / 出典 {{ row.source_slides if row.source_slides is defined else (row.source_slide_numbers if row.source_slide_numbers is defined else []) }}]
+  {% for col in columns %}
+  * {{ col.name }}: {{ row[col.name] if row[col.name] is defined else '' }}
+  {% endfor %}
+{% endfor %}
+{% endfor %}
+{% if curriculum_plan.unassigned_slides %}
+- 除外・自習スライド (unassigned_slides): {{ curriculum_plan.unassigned_slides }}
+{% endif %}
+
+【プログラム自動検証レポート（指摘事項）】
+- 全体妥当性判定: {{ '適合 (合格)' if validation_report.is_valid else '要修正 (不整合あり)' }}
+{% if validation_report.errors %}
+- エラー / 修正必須項目:
+{% for err in validation_report.errors %}
+  * {{ err }}
+{% endfor %}
+{% endif %}
+{% if validation_report.warnings %}
+- 警告 / 確認項目:
+{% for warn in validation_report.warnings %}
+  * {{ warn }}
+{% endfor %}
+{% endif %}
+- 各コマの時間状況:
+{% for sv in validation_report.session_validations %}
+  * 第{{ sv.session_number }}コマ: {{ sv.allocated_minutes }}分 (目標: {{ sv.target_minutes }}分, 差分: {{ '%+d' % sv.difference }}分)
+{% endfor %}
+{% if validation_report.missing_slides %}
+- 指導案にも除外リストにも含まれていない未言及スライド: {{ validation_report.missing_slides }}
+{% endif %}
+
+【推敲・整合化の指示】
+1. **時間の厳密な整合**:
+   - 上記の検証レポートで指摘された時間超過・不足を解消してください。
+   - 各コマを構成する行の allocated_minutes の合計が、正確に目標時間（{{ prerequisites.session_minutes }}分）と一致するように配当時間を再調整してください。
+2. **スライド網羅性の担保**:
+   - 未言及スライド（missing_slides）がある場合は、適切なコマの行に学習活動として組み込むか、時間枠の都合で自習・発展課題とする場合は unassigned_slides に明記してください。
+3. **教育的展開・難易度曲線の推敲**:
+   - 各コマ内の展開（導入・動機付け → 解説 → 個人・ペア演習 → まとめ・質疑応答）や、全コマを通じた学習の難易度推移（初歩から応用・自立へ）が受講生にとって自然かつ無理のないものとなるように表現・活動内容を推敲してください。
+   - ルーブリックの達成基準を意識し、学生の具体的な達成目標や教員の指導留意点（remarks 等）を洗練させてください。
+4. **完全なトレーサビリティ**:
+   - 出典スライド番号（source_slides または source_slide_numbers）を各行に必ず付与してください。
+
+必ず指定された JSON フォーマットに従って推敲後のカリキュラムを出力してください。

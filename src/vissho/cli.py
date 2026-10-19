@@ -9,8 +9,10 @@ from rich.table import Table
 
 from vissho.config import DEFAULT_CONFIG_TEMPLATE, load_config
 from vissho.llm.client import OllamaClient
+from vissho.pipeline.orchestrator import PipelineOrchestrator
 from vissho.pipeline.phase1_analyze import SlideAnalysisResult, SlideAnalyzer
 from vissho.pipeline.phase2_map import SessionMapper
+from vissho.pipeline.phase3_review import ConsistencyReviewer
 from vissho.utils.cache import SlideCache
 from vissho.utils.image import find_slide_images
 
@@ -357,6 +359,178 @@ def map(
         with output.open("w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         console.print(f"\n[bold green]Saved curriculum plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+
+
+@app.command()
+def run(
+    slides_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Directory containing slide images.",
+        ),
+    ],
+    config_path: Annotated[
+        Path,
+        typer.Option(
+            "--config",
+            "-c",
+            help="Path to configuration file.",
+        ),
+    ] = Path("config.yaml"),
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            "-m",
+            help="Ollama model to use.",
+        ),
+    ] = None,
+    pattern: Annotated[
+        str,
+        typer.Option(
+            "--pattern",
+            "-p",
+            help="Glob pattern for slide image files.",
+        ),
+    ] = "*.png",
+    no_cache: Annotated[
+        bool,
+        typer.Option(
+            "--no-cache",
+            help="Ignore existing cache and force re-analysis.",
+        ),
+    ] = False,
+    cache_dir: Annotated[
+        Path,
+        typer.Option(
+            "--cache-dir",
+            help="Directory to store cache files.",
+        ),
+    ] = Path(".vissho_cache"),
+    force_refine: Annotated[
+        bool,
+        typer.Option(
+            "--force-refine",
+            help="Force LLM refinement even if deterministic rules pass.",
+        ),
+    ] = False,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Path to save generated curriculum plan JSON.",
+        ),
+    ] = None,
+) -> None:
+    """Execute complete 3-phase pipeline: Analyze -> Map -> Review."""
+    import json
+
+    # 1. Load config
+    try:
+        config = load_config(config_path)
+    except FileNotFoundError:
+        console.print(
+            f"[bold red]Error:[/bold red] Configuration file '{config_path}' not found."
+        )
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[bold red]Configuration error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    client = OllamaClient(default_model=model)
+    cache = SlideCache(cache_dir=cache_dir)
+    orchestrator = PipelineOrchestrator(
+        config=config,
+        client=client,
+        cache=cache,
+        model=model,
+    )
+
+    console.print("[bold blue]Starting vissho 3-phase instruction plan pipeline...[/bold blue]")
+
+    with console.status("[bold cyan]Running pipeline stages...[/bold cyan]") as status:
+        def on_progress(stage: str, cur: int, tot: int) -> None:
+            if stage == "phase1_start":
+                status.update(f"[bold cyan]Phase 1: Analyzing {tot} slides...[/bold cyan]")
+            elif stage == "phase1_slide":
+                status.update(f"[bold cyan]Phase 1: Analyzed slide {cur}/{tot}...[/bold cyan]")
+            elif stage == "phase2_start":
+                status.update("[bold cyan]Phase 2: Mapping slides to class sessions...[/bold cyan]")
+            elif stage == "phase3_start":
+                status.update("[bold cyan]Phase 3: Validating & refining curriculum plan...[/bold cyan]")
+
+        try:
+            result = orchestrator.run(
+                slides_dir=slides_dir,
+                pattern=pattern,
+                use_cache=not no_cache,
+                force_refine=force_refine,
+                progress_callback=on_progress,
+            )
+        except Exception as e:
+            console.print(f"[bold red]Pipeline failed:[/bold red] {e}")
+            raise typer.Exit(code=1)
+
+    # Display final plan
+    final_plan = result.final_plan
+    sessions = getattr(final_plan, "sessions", [])
+    for session in sessions:
+        table = Table(
+            title=f"第{session.session_number}コマ: {session.session_title} (合計 {session.total_minutes}分 / 目標 {config.prerequisites.session_minutes}分)",
+            show_header=True,
+            header_style="bold green",
+        )
+        for col in config.columns:
+            table.add_column(
+                col.name,
+                overflow="fold",
+                style="bold" if col.name in ("topic", "learning_objectives") else None,
+            )
+
+        for row in getattr(session, "rows", []):
+            row_data = []
+            for col in config.columns:
+                val = getattr(row, col.name, "")
+                if isinstance(val, list):
+                    val_str = ", ".join(str(x) for x in val)
+                else:
+                    val_str = str(val or "")
+                row_data.append(val_str)
+            table.add_row(*row_data)
+
+        console.print()
+        console.print(table)
+
+    # Validation summary
+    rep = result.validation_report
+    console.print()
+    if rep.is_valid:
+        console.print("[bold green]Validation Status: PASSED[/bold green] (All session times and slide coverages match constraints)")
+    else:
+        console.print("[bold yellow]Validation Status: ISSUES DETECTED[/bold yellow]")
+        for err in rep.errors:
+            console.print(f"  [red]• {err}[/red]")
+        for warn in rep.warnings:
+            console.print(f"  [yellow]• {warn}[/yellow]")
+
+    console.print(
+        f"Sessions: {rep.total_sessions_actual}/{rep.total_sessions_target} | "
+        f"Total Minutes: {rep.total_minutes_actual}/{rep.total_minutes_target} min | "
+        f"Refined by LLM: {'Yes' if result.refined else 'No (deterministic rules passed)'}"
+    )
+
+    unassigned = getattr(final_plan, "unassigned_slides", [])
+    if unassigned:
+        console.print(f"[dim]Unassigned slides: {unassigned}[/dim]")
+
+    # Save output if requested
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        data = final_plan.model_dump(mode="json")
+        with output.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        console.print(f"\n[bold green]Saved final curriculum plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
 
 
 if __name__ == "__main__":

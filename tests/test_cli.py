@@ -205,3 +205,107 @@ def test_map_command_success(tmp_path: Path) -> None:
         assert "Web基礎入門" in content
 
 
+def test_run_command_success(tmp_path: Path) -> None:
+    """Test vissho run executes end-to-end pipeline and displays validation summary."""
+    from unittest.mock import patch
+    from PIL import Image
+    from vissho.pipeline.orchestrator import PipelineOrchestrator, PipelineResult
+    from vissho.core.schema import create_curriculum_plan_model
+    from vissho.core.validator import ValidationReport, SessionValidation
+    from vissho.config import load_config
+
+    config_file = tmp_path / "config.yaml"
+    runner.invoke(app, ["init", "-o", str(config_file)])
+    cfg = load_config(config_file)
+
+    slides_dir = tmp_path / "slides"
+    slides_dir.mkdir()
+    img = Image.new("RGB", (10, 10), color="blue")
+    img.save(slides_dir / "slide_01.png", format="PNG")
+
+    curriculum_cls = create_curriculum_plan_model(cfg.columns)
+    dummy_plan = curriculum_cls.model_validate(
+        {
+            "sessions": [
+                {
+                    "session_number": 1,
+                    "session_title": "Web基礎入門 (完成版)",
+                    "rows": [
+                        {
+                            "session_number": "第1コマ",
+                            "topic": "Webの基礎",
+                            "learning_objectives": "Webの仕組みを説明できる",
+                            "activities": "スライド講義",
+                            "allocated_minutes": 90,
+                            "remarks": "事前準備完了",
+                            "source_slides": [1],
+                        }
+                    ],
+                    "total_minutes": 90,
+                }
+            ],
+            "unassigned_slides": [],
+        }
+    )
+
+    dummy_report = ValidationReport(
+        is_valid=True,
+        total_sessions_valid=True,
+        total_sessions_actual=1,
+        total_sessions_target=1,
+        total_minutes_actual=90,
+        total_minutes_target=90,
+        total_minutes_difference=0,
+        session_validations=[
+            SessionValidation(
+                session_number=1,
+                session_title="Web基礎入門 (完成版)",
+                allocated_minutes=90,
+                target_minutes=90,
+                difference=0,
+                is_valid=True,
+            )
+        ],
+        referenced_slides=[1],
+        unassigned_slides=[],
+        missing_slides=[],
+        invalid_slide_references=[],
+        errors=[],
+        warnings=[],
+    )
+
+    dummy_pipeline_result = PipelineResult(
+        slide_analyses=[],
+        initial_plan=dummy_plan,
+        final_plan=dummy_plan,
+        validation_report=dummy_report,
+        refined=False,
+    )
+
+    output_json = tmp_path / "final_plan.json"
+
+    with patch.object(
+        PipelineOrchestrator, "run", return_value=dummy_pipeline_result
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                str(slides_dir),
+                "-c",
+                str(config_file),
+                "-o",
+                str(output_json),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Starting vissho 3-phase instruction plan pipeline" in result.stdout
+        assert "Web基礎入門 (完成版)" in result.stdout
+        assert "Validation Status: PASSED" in result.stdout
+        assert output_json.exists()
+        content = output_json.read_text(encoding="utf-8")
+        assert "Web基礎入門 (完成版)" in content
+
+
+

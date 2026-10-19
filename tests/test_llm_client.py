@@ -8,6 +8,7 @@ from vissho.config import Prerequisites
 from vissho.llm.client import (
     OllamaClient,
     SlideAnalysisOutput,
+    render_consistency_review_prompt,
     render_session_mapping_prompt,
     render_slide_analysis_prompt,
 )
@@ -146,4 +147,68 @@ def test_ollama_client_generate_structured() -> None:
         call_kwargs = mock_chat.call_args[1]
         assert call_kwargs["messages"][0]["content"] == "system message"
         assert call_kwargs["messages"][1]["content"] == "summarize"
+
+
+def test_render_consistency_review_prompt(sample_prerequisites: Prerequisites) -> None:
+    from vissho.config import ColumnDefinition
+    from vissho.core.validator import ValidationReport, SessionValidation
+
+    columns = [
+        ColumnDefinition(name="topic", description="単元"),
+        ColumnDefinition(name="allocated_minutes", description="配当時間"),
+        ColumnDefinition(name="source_slides", description="出典スライド"),
+    ]
+    curriculum_plan = {
+        "sessions": [
+            {
+                "session_number": 1,
+                "session_title": "第1コマ",
+                "rows": [
+                    {
+                        "topic": "導入",
+                        "allocated_minutes": 80,
+                        "source_slides": [1],
+                    }
+                ],
+                "total_minutes": 80,
+            }
+        ],
+        "unassigned_slides": [],
+    }
+    validation_report = ValidationReport(
+        is_valid=False,
+        total_sessions_valid=False,
+        total_sessions_actual=1,
+        total_sessions_target=2,
+        total_minutes_actual=80,
+        total_minutes_target=180,
+        total_minutes_difference=-100,
+        session_validations=[
+            SessionValidation(
+                session_number=1,
+                session_title="第1コマ",
+                allocated_minutes=80,
+                target_minutes=90,
+                difference=-10,
+                is_valid=False,
+            )
+        ],
+        missing_slides=[2],
+        errors=["第1コマの時間不足: 80分 (目標: 90分, -10分)", "未言及スライドが存在します: [2]"],
+        warnings=[],
+    )
+
+    prompt = render_consistency_review_prompt(
+        prerequisites=sample_prerequisites,
+        columns=columns,
+        curriculum_plan=curriculum_plan,
+        validation_report=validation_report,
+    )
+
+    assert "学習指導案ドラフト" in prompt
+    assert "自動検証レポート（指摘事項）" in prompt
+    assert "要修正 (不整合あり)" in prompt
+    assert "第1コマの時間不足: 80分" in prompt
+    assert "未言及スライド: [2]" in prompt
+    assert "時間の厳密な整合" in prompt
 

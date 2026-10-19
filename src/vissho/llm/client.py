@@ -92,6 +92,32 @@ def render_session_mapping_prompt(
     )
 
 
+def render_consistency_review_prompt(
+    prerequisites: Prerequisites,
+    columns: list[ColumnDefinition],
+    curriculum_plan: Any,
+    validation_report: Any,
+) -> str:
+    """Render the Jinja2 prompt template for consistency review and refinement."""
+    env = get_prompt_environment()
+    template = env.get_template("consistency_review.j2")
+
+    # If curriculum_plan is a Pydantic model, convert to dict for template access
+    if isinstance(curriculum_plan, BaseModel):
+        plan_dict = curriculum_plan.model_dump(mode="json")
+    elif isinstance(curriculum_plan, dict):
+        plan_dict = curriculum_plan
+    else:
+        plan_dict = {"sessions": getattr(curriculum_plan, "sessions", []), "unassigned_slides": getattr(curriculum_plan, "unassigned_slides", [])}
+
+    return template.render(
+        prerequisites=prerequisites,
+        columns=columns,
+        curriculum_plan=plan_dict,
+        validation_report=validation_report,
+    )
+
+
 class OllamaClient:
     """Adapter for interacting with Ollama API with vision models."""
 
