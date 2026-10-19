@@ -38,8 +38,19 @@
   - Ollama の `format: json` 向け JSON Schema 生成
 - [x] **CLI 基盤 & 初期化コマンド**: [`src/vissho/cli.py`](./src/vissho/cli.py)
   - `vissho init`（カレントディレクトリに `config.yaml` の雛形を生成。上書き防止 & `--force` 対応）
-- [x] **ユニットテスト**: 設定、動的スキーマ、CLI コマンドのテスト（10 件全パス）
-- [ ] **Phase 1: スライド個別解析エンジン (`SlideAnalyzer`)**
+- [x] **画像処理 & スライド番号抽出**: [`src/vissho/utils/image.py`](./src/vissho/utils/image.py)
+  - ファイル名末尾からのスライド番号自動抽出（`slide_01.png`, `01.png`, `lecture-page-12.png` 等）
+  - 画像の SHA-256 ハッシュ計算、画像整合性検証
+- [x] **中間キャッシュ機構**: [`src/vissho/utils/cache.py`](./src/vissho/utils/cache.py)
+  - 画像ハッシュ・使用モデル・暗黙知補足メモの複合キーによる決定論的キャッシュ管理（`.vissho_cache/`）
+- [x] **LLM クライアント & プロンプト**: [`src/vissho/llm/client.py`](./src/vissho/llm/client.py), [`src/vissho/llm/prompts/`](./src/vissho/llm/prompts/)
+  - Jinja2 によるスライド解析プロンプト管理（前提条件・暗黙知メモの自動注入）
+  - Ollama Vision API 連携アダプタ（構造化 JSON 出力対応）
+- [x] **Phase 1: スライド個別解析エンジン (`SlideAnalyzer`)**: [`src/vissho/pipeline/phase1_analyze.py`](./src/vissho/pipeline/phase1_analyze.py)
+  - スライド画像からの主題、トピック、重要ポイント、学習活動、所要時間目安、留意点・暗黙知の抽出
+  - 差分実行（キャッシュヒット時は推論スキップ）と完全なトレーサビリティ情報の保持
+  - CLI コマンド `vissho analyze` による進捗表示（Rich Progress）と結果サマリー表の表示
+- [x] **ユニットテスト**: 全 32 件パス、テストカバレッジ 92%
 - [ ] **Phase 2: コマ割りマッピングエンジン (`SessionMapper`)**
 - [ ] **Phase 3: 全体整合・推敲エンジン (`ConsistencyReviewer`)**
 - [ ] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
@@ -134,10 +145,29 @@ supplementary_notes:
     note: "時間が押しやすいため、演習課題の一部は持ち帰り宿題としてもよい。"
 ```
 
+### 5.3 スライドの個別解析 (`vissho analyze`)
+
+指定ディレクトリ内のスライド画像を順次読み込み、各スライドの教育要素（主題、トピック、配当目安時間など）を個別に解析してキャッシュ（`.vissho_cache/`）に保存します。
+
+```bash
+uv run vissho analyze slides/
+```
+
+主なオプション：
+- `-c, --config <path>`: 設定ファイルのパス（デフォルト: `config.yaml`）
+- `-m, --model <model>`: 使用する Ollama Vision モデル（デフォルト: `qwen2.5-vl`）
+- `-p, --pattern <glob>`: 対象画像のマッチパターン（デフォルト: `*.png`）
+- `--no-cache`: 既存キャッシュを無視して強制的に再解析
+- `--cache-dir <dir>`: キャッシュ保存先ディレクトリ（デフォルト: `.vissho_cache`）
+
 ---
 
 ## 6. テスト実行
 
 ```bash
+# 全テスト実行
 uv run pytest
+
+# カバレッジ測定
+uv run pytest --cov=vissho
 ```
