@@ -10,6 +10,7 @@ from rich.table import Table
 from vissho.config import DEFAULT_CONFIG_TEMPLATE, load_config
 from vissho.llm.client import OllamaClient
 from vissho.pipeline.phase1_analyze import SlideAnalysisResult, SlideAnalyzer
+from vissho.pipeline.phase2_map import SessionMapper
 from vissho.utils.cache import SlideCache
 from vissho.utils.image import find_slide_images
 
@@ -219,6 +220,143 @@ def analyze(
         f"({cached_count} cached, {total_slides - cached_count} inferred) | "
         f"Total estimated duration: [bold]{total_est_minutes} minutes[/bold]"
     )
+
+
+@app.command()
+def map(
+    slides_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Directory containing slide images.",
+        ),
+    ],
+    config_path: Annotated[
+        Path,
+        typer.Option(
+            "--config",
+            "-c",
+            help="Path to configuration file.",
+        ),
+    ] = Path("config.yaml"),
+    model: Annotated[
+        str | None,
+        typer.Option(
+            "--model",
+            "-m",
+            help="Ollama model to use for mapping (default: qwen2.5-vl).",
+        ),
+    ] = None,
+    pattern: Annotated[
+        str,
+        typer.Option(
+            "--pattern",
+            "-p",
+            help="Glob pattern for slide image files.",
+        ),
+    ] = "*.png",
+    cache_dir: Annotated[
+        Path,
+        typer.Option(
+            "--cache-dir",
+            help="Directory to store cache files.",
+        ),
+    ] = Path(".vissho_cache"),
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Path to save generated curriculum plan JSON.",
+        ),
+    ] = None,
+) -> None:
+    """Map analyzed slide elements into structured class sessions (Phase 2)."""
+    import json
+
+    # 1. Load config
+    try:
+        config = load_config(config_path)
+    except FileNotFoundError:
+        console.print(
+            f"[bold red]Error:[/bold red] Configuration file '{config_path}' not found."
+        )
+        raise typer.Exit(code=1)
+    except Exception as e:
+        console.print(f"[bold red]Configuration error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    # 2. Collect & analyze slides (Phase 1)
+    try:
+        slide_items = find_slide_images(slides_dir, pattern=pattern)
+    except Exception as e:
+        console.print(f"[bold red]Slide discovery error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    client = OllamaClient(default_model=model)
+    cache = SlideCache(cache_dir=cache_dir)
+    analyzer = SlideAnalyzer(config=config, client=client, cache=cache, model=model)
+
+    console.print(f"[bold blue]Step 1: Preparing slide analyses for {len(slide_items)} slides...[/bold blue]")
+    slide_analyses: list[SlideAnalysisResult] = []
+    for num, path in slide_items:
+        res = analyzer.analyze_slide(slide_number=num, image_path=path, use_cache=True)
+        slide_analyses.append(res)
+
+    # 3. Execute Phase 2 Session Mapping
+    console.print(
+        f"[bold blue]Step 2: Mapping {len(slide_analyses)} slides into "
+        f"{config.prerequisites.total_sessions} sessions ({config.prerequisites.session_minutes} min/session)...[/bold blue]"
+    )
+
+    mapper = SessionMapper(config=config, client=client, model=model)
+    try:
+        with console.status("[bold cyan]Structuring curriculum plan with LLM...[/bold cyan]"):
+            curriculum_plan = mapper.map_sessions(slide_analyses)
+    except Exception as e:
+        console.print(f"[bold red]Mapping failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    # 4. Display mapped sessions
+    sessions = getattr(curriculum_plan, "sessions", [])
+    for session in sessions:
+        table = Table(
+            title=f"第{session.session_number}コマ: {session.session_title} (合計 {session.total_minutes}分 / 目標 {config.prerequisites.session_minutes}分)",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        # Determine column headers from config
+        for col in config.columns:
+            table.add_column(
+                col.name,
+                overflow="fold",
+                style="bold" if col.name in ("topic", "learning_objectives") else None,
+            )
+
+        for row in getattr(session, "rows", []):
+            row_data = []
+            for col in config.columns:
+                val = getattr(row, col.name, "")
+                if isinstance(val, list):
+                    val_str = ", ".join(str(x) for x in val)
+                else:
+                    val_str = str(val or "")
+                row_data.append(val_str)
+            table.add_row(*row_data)
+
+        console.print()
+        console.print(table)
+
+    unassigned = getattr(curriculum_plan, "unassigned_slides", [])
+    if unassigned:
+        console.print(f"\n[yellow]Unassigned slides:[/yellow] {unassigned}")
+
+    # 5. Save output if requested
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        data = curriculum_plan.model_dump(mode="json")
+        with output.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        console.print(f"\n[bold green]Saved curriculum plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
 
 
 if __name__ == "__main__":

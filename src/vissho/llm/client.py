@@ -8,7 +8,7 @@ import jinja2
 import ollama
 from pydantic import BaseModel, Field
 
-from vissho.config import Prerequisites
+from vissho.config import ColumnDefinition, Prerequisites
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -43,6 +43,14 @@ class LLMClientProtocol(Protocol):
         model: str | None = None,
     ) -> SlideAnalysisOutput: ...
 
+    def generate_structured(
+        self,
+        prompt: str,
+        schema: type[BaseModel] | dict[str, Any],
+        model: str | None = None,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]: ...
+
 
 def get_prompt_environment() -> jinja2.Environment:
     """Create a Jinja2 template environment for prompt rendering."""
@@ -66,6 +74,21 @@ def render_slide_analysis_prompt(
         prerequisites=prerequisites,
         slide_number=slide_number,
         supplementary_notes=supplementary_notes or [],
+    )
+
+
+def render_session_mapping_prompt(
+    prerequisites: Prerequisites,
+    columns: list[ColumnDefinition],
+    slide_analyses: list[Any],
+) -> str:
+    """Render the Jinja2 prompt template for session mapping."""
+    env = get_prompt_environment()
+    template = env.get_template("session_mapping.j2")
+    return template.render(
+        prerequisites=prerequisites,
+        columns=columns,
+        slide_analyses=slide_analyses,
     )
 
 
@@ -122,6 +145,48 @@ class OllamaClient:
         try:
             parsed = json.loads(content)
             return SlideAnalysisOutput.model_validate(parsed)
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse structured output from Ollama response: {e}\nRaw content: {content}"
+            ) from e
+
+    def generate_structured(
+        self,
+        prompt: str,
+        schema: type[BaseModel] | dict[str, Any],
+        model: str | None = None,
+        system_prompt: str | None = None,
+    ) -> dict[str, Any]:
+        """Call Ollama model to generate structured JSON output following the given schema."""
+        target_model = model or self.default_model
+
+        if isinstance(schema, dict):
+            schema_dict = schema
+        else:
+            schema_dict = schema.model_json_schema()
+
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            response = self._client.chat(
+                model=target_model,
+                messages=messages,
+                format=schema_dict,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to call Ollama model '{target_model}' at {self.host}: {e}"
+            ) from e
+
+        content = response["message"]["content"]
+        try:
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Expected JSON object from Ollama, got: {type(parsed)}")
+            return parsed
         except Exception as e:
             raise ValueError(
                 f"Failed to parse structured output from Ollama response: {e}\nRaw content: {content}"

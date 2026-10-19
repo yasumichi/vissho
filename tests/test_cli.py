@@ -118,3 +118,90 @@ def test_analyze_success(tmp_path: Path) -> None:
         assert "Analysis complete: 1 slides" in result.stdout
         mock_analyze.assert_called_once()
 
+
+def test_map_command_success(tmp_path: Path) -> None:
+    """Test vissho map runs successfully and outputs curriculum plan table and JSON."""
+    from unittest.mock import patch
+    from PIL import Image
+    from vissho.llm.client import SlideAnalysisOutput
+    from vissho.pipeline.phase1_analyze import SlideAnalysisResult, SlideAnalyzer
+    from vissho.pipeline.phase2_map import SessionMapper
+    from vissho.core.schema import create_curriculum_plan_model
+    from vissho.config import load_config
+
+    config_file = tmp_path / "config.yaml"
+    runner.invoke(app, ["init", "-o", str(config_file)])
+    cfg = load_config(config_file)
+
+    slides_dir = tmp_path / "slides"
+    slides_dir.mkdir()
+    img = Image.new("RGB", (10, 10), color="blue")
+    img.save(slides_dir / "slide_01.png", format="PNG")
+
+    dummy_analysis = SlideAnalysisResult(
+        slide_number=1,
+        image_path=str((slides_dir / "slide_01.png").resolve()),
+        image_hash="dummyhash",
+        analysis=SlideAnalysisOutput(
+            title="概要",
+            topics=["Web"],
+            key_points=["基礎"],
+            suggested_activities=["講義"],
+            estimated_minutes=90,
+            instructor_notes=[],
+        ),
+        supplementary_notes=[],
+        cached=False,
+    )
+
+    curriculum_cls = create_curriculum_plan_model(cfg.columns)
+    dummy_plan = curriculum_cls.model_validate(
+        {
+            "sessions": [
+                {
+                    "session_number": 1,
+                    "session_title": "Web基礎入門",
+                    "rows": [
+                        {
+                            "session_number": "第1コマ",
+                            "topic": "Webの基礎",
+                            "learning_objectives": "Webの仕組みを説明できる",
+                            "activities": "スライド講義",
+                            "allocated_minutes": 90,
+                            "remarks": "PC環境を事前に確認する",
+                            "source_slides": [1],
+                        }
+                    ],
+                    "total_minutes": 90,
+                }
+            ],
+            "unassigned_slides": [],
+        }
+    )
+
+    output_json = tmp_path / "plan.json"
+
+    with patch.object(
+        SlideAnalyzer, "analyze_slide", return_value=dummy_analysis
+    ), patch.object(SessionMapper, "map_sessions", return_value=dummy_plan):
+        result = runner.invoke(
+            app,
+            [
+                "map",
+                str(slides_dir),
+                "-c",
+                str(config_file),
+                "-o",
+                str(output_json),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "第1コマ: Web基礎入門" in result.stdout
+        assert "Webの基" in result.stdout
+        assert output_json.exists()
+        content = output_json.read_text(encoding="utf-8")
+        assert "Webの基礎" in content
+        assert "Web基礎入門" in content
+
+
