@@ -55,8 +55,12 @@
   - 各行への出典スライド番号（トレーサビリティ）の付与および補足暗黙知の反映
   - 各コマの合計配当時間の決定論的整合性補正（各行の `allocated_minutes` の合算値と同期）
   - CLI コマンド `vissho map` による全コマ指導案テーブル（Rich Table）表示および JSON 出力
-- [x] **ユニットテスト**: 全 39 件パス、テストカバレッジ 90%（`phase2_map.py` は 100%）
-- [ ] **Phase 3: 全体整合・推敲エンジン (`ConsistencyReviewer`)**
+- [x] **Phase 3: 全体整合・推敲エンジン (`ConsistencyReviewer`)**: [`src/vissho/pipeline/phase3_review.py`](./src/vissho/pipeline/phase3_review.py)
+  - 決定論的検証器（[`src/vissho/core/validator.py`](./src/vissho/core/validator.py)）による時間計算・スライド網羅性（未言及スライド検出）検証
+  - 検証レポートの指摘に基づく LLM 授業展開・難易度曲線の推敲と再調整
+  - 3段階パイプライン統合オーケストレーター（[`src/vissho/pipeline/orchestrator.py`](./src/vissho/pipeline/orchestrator.py)）による一括制御
+  - CLI コマンド `vissho run` による全パイプライン実行と検証結果サマリー表示
+- [x] **ユニットテスト**: 全 49 件パス、テストカバレッジ 89%
 - [ ] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
 
 ---
@@ -176,12 +180,29 @@ uv run vissho map slides/
 uv run vissho map slides/ -o output/curriculum_plan.json
 ```
 
+### 5.5 全パイプライン一括実行 (`vissho run`)
+
+スライド個別解析（Phase 1）→ コマ割りマッピング（Phase 2）→ 全体整合・推敲（Phase 3）をエンドツーエンドで一括実行し、完成した学習指導案および検証結果サマリーを出力します。
+
+```bash
+# 全パイプラインを実行して結果を表示
+uv run vissho run slides/
+
+# 完成した指導案を JSON に保存
+uv run vissho run slides/ -o output/final_plan.json
+
+# 決定論的検証が合格していても LLM による推敲を強制実行する場合
+uv run vissho run slides/ --force-refine
+```
+
 主なオプション：
 - `-c, --config <path>`: 設定ファイルのパス（デフォルト: `config.yaml`）
-- `-m, --model <model>`: 使用する Ollama モデル（デフォルト: `qwen2.5-vl`）
+- `-m, --model <model>`: 使用する Ollama モデル
 - `-p, --pattern <glob>`: 対象画像のマッチパターン（デフォルト: `*.png`）
+- `--no-cache`: キャッシュを無視してスライド解析を強制再実行
 - `--cache-dir <dir>`: キャッシュ保存先ディレクトリ（デフォルト: `.vissho_cache`）
-- `-o, --output <path>`: 生成されたカリキュラム指導案 JSON の出力先パス
+- `--force-refine`: 決定論的検証に合格していても LLM による推敲を強制実行
+- `-o, --output <path>`: 完成したカリキュラム指導案 JSON の出力先パス
 
 ---
 
