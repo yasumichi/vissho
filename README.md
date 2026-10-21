@@ -60,8 +60,12 @@
   - 検証レポートの指摘に基づく LLM 授業展開・難易度曲線の推敲と再調整
   - 3段階パイプライン統合オーケストレーター（[`src/vissho/pipeline/orchestrator.py`](./src/vissho/pipeline/orchestrator.py)）による一括制御
   - CLI コマンド `vissho run` による全パイプライン実行と検証結果サマリー表示
-- [x] **ユニットテスト**: 全 49 件パス、テストカバレッジ 89%
-- [ ] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
+- [x] **ユニットテスト**: 全 62 件パス、テストカバレッジ 91%
+- [x] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
+  - [`src/vissho/exporter/excel.py`](./src/vissho/exporter/excel.py): プレーン仕様（太字・背景色なし）、テキスト折り返し（Wrap Text）、列幅・行高自動調整、コマ合計の Excel `SUM` 数式埋め込み、別シートへの整合性検証結果出力
+  - [`src/vissho/exporter/markdown.py`](./src/vissho/exporter/markdown.py): 前提情報・ルーブリック・各コマの GFM テーブル、未割り当てスライド、検証レポートサマリー
+  - [`src/vissho/exporter/json_export.py`](./src/vissho/exporter/json_export.py): 生データ出力およびメタデータ（前提条件・列定義・検証結果）ラッパー出力対応
+- [x] **プレビュー & エクスポート CLI (`vissho preview`)**: 生成済み JSON からのターミナル（Rich Table）、Markdown、Excel、JSON への再プレビュー・出力変換
 
 ---
 
@@ -188,8 +192,14 @@ uv run vissho map slides/ -o output/curriculum_plan.json
 # 全パイプラインを実行して結果を表示
 uv run vissho run slides/
 
-# 完成した指導案を JSON に保存
-uv run vissho run slides/ -o output/final_plan.json
+# Excel ワークブック (.xlsx) として出力
+uv run vissho run slides/ -x output/curriculum_plan.xlsx
+
+# Markdown (.md) として出力
+uv run vissho run slides/ --md output/curriculum_plan.md
+
+# Excel, Markdown, JSON を同時に出力
+uv run vissho run slides/ -x output/plan.xlsx --md output/plan.md -o output/plan.json
 
 # 決定論的検証が合格していても LLM による推敲を強制実行する場合
 uv run vissho run slides/ --force-refine
@@ -202,7 +212,32 @@ uv run vissho run slides/ --force-refine
 - `--no-cache`: キャッシュを無視してスライド解析を強制再実行
 - `--cache-dir <dir>`: キャッシュ保存先ディレクトリ（デフォルト: `.vissho_cache`）
 - `--force-refine`: 決定論的検証に合格していても LLM による推敲を強制実行
-- `-o, --output <path>`: 完成したカリキュラム指導案 JSON の出力先パス
+- `-x, --excel <path>`: Excel ワークブック (.xlsx) の出力先パス
+- `--md, --markdown <path>`: Markdown (.md) の出力先パス
+- `-o, --output <path>`: 出力先パス（拡張子 `.xlsx` や `.md` に応じて自動判定、または JSON 保存）
+
+### 5.6 プレビュー & 各種フォーマット変換 (`vissho preview`)
+
+一度生成・保存したカリキュラムプラン JSON を読み込み、ターミナル上での再確認や、Excel・Markdown・JSON 形式への変換出力が可能です。
+
+```bash
+# ターミナル上でリッチテーブル表示
+uv run vissho preview output/plan.json
+
+# Markdown 形式でプレビュー表示（標準出力）
+uv run vissho preview output/plan.json -f markdown
+
+# Markdown ファイルとして保存
+uv run vissho preview output/plan.json -f markdown -o output/plan.md
+
+# Excel ワークブックとして出力保存
+uv run vissho preview output/plan.json -f excel -o output/plan.xlsx
+```
+
+主なオプション：
+- `-c, --config <path>`: 設定ファイルのパス（デフォルト: `config.yaml`）
+- `-f, --format <format>`: プレビュー形式 (`terminal`, `markdown`, `excel`, `json` / デフォルト: `terminal`)
+- `-o, --output <path>`: 変換結果の出力先ファイルパス
 
 ---
 

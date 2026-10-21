@@ -1,13 +1,15 @@
 """CLI entry point for vissho."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 import typer
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from vissho.config import DEFAULT_CONFIG_TEMPLATE, load_config
+from vissho.config import DEFAULT_CONFIG_TEMPLATE, VisshoConfig, load_config
+from vissho.core.validator import ValidationReport, validate_curriculum_plan
+from vissho.exporter import export_to_excel, export_to_json, export_to_markdown
 from vissho.llm.client import OllamaClient
 from vissho.pipeline.orchestrator import PipelineOrchestrator
 from vissho.pipeline.phase1_analyze import SlideAnalysisResult, SlideAnalyzer
@@ -22,6 +24,46 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+def _export_outputs(
+    plan: Any,
+    config: VisshoConfig,
+    validation_report: ValidationReport | None = None,
+    output: Path | None = None,
+    excel: Path | None = None,
+    markdown: Path | None = None,
+) -> None:
+    """Save plan in requested export formats."""
+    # 1. Explicit --excel option
+    if excel:
+        export_to_excel(plan, config, output_path=excel, validation_report=validation_report)
+        console.print(f"[bold green]Saved Excel workbook to:[/bold green] [cyan]{excel.resolve()}[/cyan]")
+
+    # 2. Explicit --markdown option
+    if markdown:
+        export_to_markdown(plan, config, output_path=markdown, validation_report=validation_report)
+        console.print(f"[bold green]Saved Markdown to:[/bold green] [cyan]{markdown.resolve()}[/cyan]")
+
+    # 3. Handle --output option based on file extension
+    if output:
+        suffix = output.suffix.lower()
+        if suffix in (".xlsx", ".xlsm", ".xltx"):
+            export_to_excel(plan, config, output_path=output, validation_report=validation_report)
+            console.print(f"[bold green]Saved Excel workbook to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+        elif suffix in (".md", ".markdown"):
+            export_to_markdown(plan, config, output_path=output, validation_report=validation_report)
+            console.print(f"[bold green]Saved Markdown to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+        else:
+            # Default to JSON
+            export_to_json(
+                plan,
+                output_path=output,
+                config=config,
+                validation_report=validation_report,
+                include_metadata=False,
+            )
+            console.print(f"[bold green]Saved JSON plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
 
 
 @app.callback()
@@ -268,13 +310,27 @@ def map(
         typer.Option(
             "--output",
             "-o",
-            help="Path to save generated curriculum plan JSON.",
+            help="Path to save generated curriculum plan (JSON by default, or determined by extension).",
+        ),
+    ] = None,
+    excel: Annotated[
+        Path | None,
+        typer.Option(
+            "--excel",
+            "-x",
+            help="Path to export curriculum plan to Excel (.xlsx).",
+        ),
+    ] = None,
+    markdown: Annotated[
+        Path | None,
+        typer.Option(
+            "--markdown",
+            "--md",
+            help="Path to export curriculum plan to Markdown (.md).",
         ),
     ] = None,
 ) -> None:
     """Map analyzed slide elements into structured class sessions (Phase 2)."""
-    import json
-
     # 1. Load config
     try:
         config = load_config(config_path)
@@ -353,12 +409,13 @@ def map(
         console.print(f"\n[yellow]Unassigned slides:[/yellow] {unassigned}")
 
     # 5. Save output if requested
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        data = curriculum_plan.model_dump(mode="json")
-        with output.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        console.print(f"\n[bold green]Saved curriculum plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+    _export_outputs(
+        plan=curriculum_plan,
+        config=config,
+        output=output,
+        excel=excel,
+        markdown=markdown,
+    )
 
 
 @app.command()
@@ -419,13 +476,27 @@ def run(
         typer.Option(
             "--output",
             "-o",
-            help="Path to save generated curriculum plan JSON.",
+            help="Path to save generated curriculum plan (JSON by default, or determined by extension).",
+        ),
+    ] = None,
+    excel: Annotated[
+        Path | None,
+        typer.Option(
+            "--excel",
+            "-x",
+            help="Path to export curriculum plan to Excel (.xlsx).",
+        ),
+    ] = None,
+    markdown: Annotated[
+        Path | None,
+        typer.Option(
+            "--markdown",
+            "--md",
+            help="Path to export curriculum plan to Markdown (.md).",
         ),
     ] = None,
 ) -> None:
     """Execute complete 3-phase pipeline: Analyze -> Map -> Review."""
-    import json
-
     # 1. Load config
     try:
         config = load_config(config_path)
@@ -525,12 +596,176 @@ def run(
         console.print(f"[dim]Unassigned slides: {unassigned}[/dim]")
 
     # Save output if requested
-    if output:
-        output.parent.mkdir(parents=True, exist_ok=True)
-        data = final_plan.model_dump(mode="json")
-        with output.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        console.print(f"\n[bold green]Saved final curriculum plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+    _export_outputs(
+        plan=final_plan,
+        config=config,
+        validation_report=rep,
+        output=output,
+        excel=excel,
+        markdown=markdown,
+    )
+
+
+@app.command()
+def preview(
+    plan_path: Annotated[
+        Path,
+        typer.Argument(
+            help="Path to generated curriculum plan JSON file.",
+        ),
+    ],
+    config_path: Annotated[
+        Path,
+        typer.Option(
+            "--config",
+            "-c",
+            help="Path to configuration file.",
+        ),
+    ] = Path("config.yaml"),
+    format: Annotated[
+        str,
+        typer.Option(
+            "--format",
+            "-f",
+            help="Preview/export format: 'terminal', 'markdown', 'excel', or 'json'.",
+        ),
+    ] = "terminal",
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Path to export the previewed plan.",
+        ),
+    ] = None,
+) -> None:
+    """Preview or export a curriculum plan from a JSON file in terminal, Markdown, Excel, or JSON format."""
+    import json
+
+    # 1. Load curriculum plan JSON
+    if not plan_path.exists():
+        console.print(f"[bold red]Error:[/bold red] Plan file '{plan_path}' not found.")
+        raise typer.Exit(code=1)
+
+    try:
+        with plan_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        console.print(f"[bold red]Failed to read plan JSON:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    if isinstance(data, dict) and "plan" in data and isinstance(data["plan"], dict):
+        plan_dict = data["plan"]
+        val_data = data.get("validation")
+        validation_report = ValidationReport.model_validate(val_data) if val_data else None
+    else:
+        plan_dict = data
+        validation_report = None
+
+    # 2. Load configuration
+    try:
+        config = load_config(config_path)
+    except Exception as e:
+        console.print(f"[bold red]Configuration error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    # 3. Deterministic validation if not loaded
+    if validation_report is None:
+        validation_report = validate_curriculum_plan(plan_dict, config)
+
+    # 4. Handle requested format
+    fmt = format.lower()
+    if fmt == "terminal":
+        # Rich table output
+        sessions = plan_dict.get("sessions", [])
+        for session in sessions:
+            s_num = session.get("session_number", 1)
+            s_title = session.get("session_title", "")
+            s_total = session.get("total_minutes", 0)
+            table = Table(
+                title=f"第{s_num}コマ: {s_title} (合計 {s_total}分 / 目標 {config.prerequisites.session_minutes}分)",
+                show_header=True,
+                header_style="bold green",
+            )
+            for col in config.columns:
+                table.add_column(
+                    col.name,
+                    overflow="fold",
+                    style="bold" if col.name in ("topic", "learning_objectives") else None,
+                )
+            for row in session.get("rows", []):
+                row_data = []
+                for col in config.columns:
+                    val = row.get(col.name, "")
+                    if isinstance(val, list):
+                        val_str = ", ".join(str(x) for x in val)
+                    else:
+                        val_str = str(val or "")
+                    row_data.append(val_str)
+                table.add_row(*row_data)
+
+            console.print()
+            console.print(table)
+
+        # Validation status
+        console.print()
+        if validation_report.is_valid:
+            console.print("[bold green]Validation Status: PASSED[/bold green]")
+        else:
+            console.print("[bold yellow]Validation Status: ISSUES DETECTED[/bold yellow]")
+            for err in validation_report.errors:
+                console.print(f"  [red]• {err}[/red]")
+            for warn in validation_report.warnings:
+                console.print(f"  [yellow]• {warn}[/yellow]")
+
+        unassigned = plan_dict.get("unassigned_slides", [])
+        if unassigned:
+            console.print(f"[dim]Unassigned slides: {unassigned}[/dim]")
+
+        if output:
+            _export_outputs(plan_dict, config, validation_report, output=output)
+
+    elif fmt in ("markdown", "md"):
+        md_text = export_to_markdown(
+            plan_dict,
+            config,
+            output_path=output,
+            validation_report=validation_report,
+        )
+        if output:
+            console.print(f"[bold green]Saved Markdown to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+        else:
+            console.print(md_text)
+
+    elif fmt in ("excel", "xlsx"):
+        target_out = output or plan_path.with_suffix(".xlsx")
+        export_to_excel(
+            plan_dict,
+            config,
+            output_path=target_out,
+            validation_report=validation_report,
+        )
+        console.print(f"[bold green]Saved Excel workbook to:[/bold green] [cyan]{target_out.resolve()}[/cyan]")
+
+    elif fmt == "json":
+        json_text = export_to_json(
+            plan_dict,
+            output_path=output,
+            config=config,
+            validation_report=validation_report,
+            include_metadata=True,
+        )
+        if output:
+            console.print(f"[bold green]Saved JSON to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+        else:
+            console.print_json(json_text)
+
+    else:
+        console.print(
+            f"[bold red]Unknown format:[/bold red] '{format}'. "
+            "Choose from 'terminal', 'markdown', 'excel', or 'json'."
+        )
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
