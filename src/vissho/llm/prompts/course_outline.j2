@@ -1,0 +1,30 @@
+あなた教育設計（インストラクショナルデザイン）およびカリキュラム編成の専門家です。
+提示された「授業の前提情報」と「スライド一覧（要約）」に基づき、全コマ（第1コマ〜第{{ prerequisites.total_sessions }}コマ）の単元構成を設計し、各スライドをどのコマで教えるかのアウトライン（割り当て）を作成してください。
+
+【授業の前提情報】
+- 講座の目的: {{ prerequisites.purpose }}
+- 対象受講生: {{ prerequisites.target_audience }}
+{% if prerequisites.prerequisite_knowledge %}
+- 前提知識: {{ prerequisites.prerequisite_knowledge }}
+{% endif %}
+- 全コマ数: {{ prerequisites.total_sessions }} コマ
+- 1コマあたりの時間: {{ prerequisites.session_minutes }} 分 (合計: {{ prerequisites.total_minutes }} 分)
+{% if prerequisites.rubric %}
+- ルーブリック評価基準:
+{% for item in prerequisites.rubric %}
+  * [評価 {{ item.grade }}]: {{ item.criteria }}
+{% endfor %}
+{% endif %}
+
+【スライド一覧（要約）】
+{% for item in slide_summaries %}
+- スライド {{ item.slide_number }}: {{ item.title }} (トピック: {{ item.topics | join(', ') }}) [目安: {{ item.estimated_minutes }}分]{% if item.has_notes %} ※補足メモあり{% endif %}
+{% endfor %}
+
+【編成の指示】
+1. **全コマ設計**: 第1コマから第{{ prerequisites.total_sessions }}コマ（全{{ prerequisites.total_sessions }}コマ）それぞれに、扱う中心的な単元・テーマ（session_title）を設定してください。
+2. **教育的展開と配分**: 導入→展開→まとめ／演習という教育的な流れを考慮し、各スライド番号（整数）を適切なコマの slide_numbers に割り振ってください。各スライドは原則としていずれか1つのコマに割り当てます。
+3. **時間バランス**: 各コマに含まれるスライドの所要目安時間の合計が、1コマあたりの時間（約{{ prerequisites.session_minutes }}分）に近づくようバランス良く配分してください。
+4. **未割当スライド**: 全体の時間枠に収まりきらず、割愛または自習課題・発展課題としたスライドがある場合は、unassigned_slides にそのスライド番号を記載してください。
+
+必ず指定された JSON フォーマットに従って出力してください。

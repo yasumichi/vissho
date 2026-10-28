@@ -33,6 +33,16 @@ class SlideAnalysisOutput(BaseModel):
     )
 
 
+class SlideSummaryItem(BaseModel):
+    """Lightweight summary of a slide for Step 2-A course outline mapping."""
+
+    slide_number: int = Field(..., description="スライド番号")
+    title: str = Field(..., description="スライドのタイトルまたは主題")
+    topics: list[str] = Field(default_factory=list, description="主な概念やキーワード")
+    estimated_minutes: int = Field(default=5, ge=1, description="所要目安時間（分）")
+    has_notes: bool = Field(default=False, description="補足・暗黙知メモの有無")
+
+
 class LLMClientProtocol(Protocol):
     """Protocol for LLM adapters to support testing and alternate backends."""
 
@@ -82,11 +92,43 @@ def render_session_mapping_prompt(
     columns: list[ColumnDefinition],
     slide_analyses: list[Any],
 ) -> str:
-    """Render the Jinja2 prompt template for session mapping."""
+    """Render the Jinja2 prompt template for legacy session mapping."""
     env = get_prompt_environment()
     template = env.get_template("session_mapping.j2")
     return template.render(
         prerequisites=prerequisites,
+        columns=columns,
+        slide_analyses=slide_analyses,
+    )
+
+
+def render_course_outline_prompt(
+    prerequisites: Prerequisites,
+    slide_summaries: list[SlideSummaryItem | dict[str, Any]],
+) -> str:
+    """Render the Jinja2 prompt template for Step 2-A course outline mapping."""
+    env = get_prompt_environment()
+    template = env.get_template("course_outline.j2")
+    return template.render(
+        prerequisites=prerequisites,
+        slide_summaries=slide_summaries,
+    )
+
+
+def render_session_detail_prompt(
+    prerequisites: Prerequisites,
+    session_number: int,
+    session_title: str,
+    columns: list[ColumnDefinition],
+    slide_analyses: list[Any],
+) -> str:
+    """Render the Jinja2 prompt template for Step 2-B single session detail generation."""
+    env = get_prompt_environment()
+    template = env.get_template("session_detail.j2")
+    return template.render(
+        prerequisites=prerequisites,
+        session_number=session_number,
+        session_title=session_title,
         columns=columns,
         slide_analyses=slide_analyses,
     )
@@ -127,12 +169,21 @@ class OllamaClient:
         self,
         host: str | None = None,
         default_model: str | None = None,
+        num_ctx: int | None = None,
     ) -> None:
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
         self.default_model = (
             default_model or os.environ.get("VISSHO_MODEL") or self.DEFAULT_MODEL
         )
+        ctx_env = os.environ.get("VISSHO_NUM_CTX")
+        self.num_ctx = num_ctx if num_ctx is not None else (int(ctx_env) if ctx_env else None)
         self._client = ollama.Client(host=self.host)
+
+    def _get_options(self) -> dict[str, Any] | None:
+        """Construct Ollama options dictionary if configured."""
+        if self.num_ctx is not None:
+            return {"num_ctx": self.num_ctx}
+        return None
 
     def analyze_slide(
         self,
@@ -156,12 +207,17 @@ class OllamaClient:
             }
         ]
 
+        chat_kwargs: dict[str, Any] = {
+            "model": target_model,
+            "messages": messages,
+            "format": schema,
+        }
+        options = self._get_options()
+        if options:
+            chat_kwargs["options"] = options
+
         try:
-            response = self._client.chat(
-                model=target_model,
-                messages=messages,
-                format=schema,
-            )
+            response = self._client.chat(**chat_kwargs)
         except Exception as e:
             raise RuntimeError(
                 f"Failed to call Ollama model '{target_model}' at {self.host}: {e}"
@@ -196,12 +252,17 @@ class OllamaClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        chat_kwargs: dict[str, Any] = {
+            "model": target_model,
+            "messages": messages,
+            "format": schema_dict,
+        }
+        options = self._get_options()
+        if options:
+            chat_kwargs["options"] = options
+
         try:
-            response = self._client.chat(
-                model=target_model,
-                messages=messages,
-                format=schema_dict,
-            )
+            response = self._client.chat(**chat_kwargs)
         except Exception as e:
             raise RuntimeError(
                 f"Failed to call Ollama model '{target_model}' at {self.host}: {e}"

@@ -96,10 +96,18 @@ class PipelineOrchestrator:
         )
 
         # Phase 2: Session Mapping
+        total_sessions = self.config.prerequisites.total_sessions
         if progress_callback:
-            progress_callback("phase2_start", 1, 3)
+            progress_callback("phase2_start", 0, total_sessions)
 
-        initial_plan = self.mapper.map_sessions(slide_analyses)
+        def _phase2_progress(cur: int, tot: int) -> None:
+            if progress_callback:
+                progress_callback("phase2_session", cur, tot)
+
+        initial_plan = self.mapper.map_sessions(
+            slide_analyses,
+            progress_callback=_phase2_progress,
+        )
 
         # Phase 3: Consistency Review & Refinement
         if progress_callback:

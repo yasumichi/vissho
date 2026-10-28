@@ -212,3 +212,97 @@ def test_render_consistency_review_prompt(sample_prerequisites: Prerequisites) -
     assert "未言及スライド: [2]" in prompt
     assert "時間の厳密な整合" in prompt
 
+
+def test_render_course_outline_prompt(sample_prerequisites: Prerequisites) -> None:
+    from vissho.llm.client import SlideSummaryItem, render_course_outline_prompt
+
+    summaries = [
+        SlideSummaryItem(
+            slide_number=1,
+            title="イントロダクション",
+            topics=["Python", "環境設定"],
+            estimated_minutes=30,
+            has_notes=True,
+        ),
+        SlideSummaryItem(
+            slide_number=2,
+            title="基本文法",
+            topics=["変数", "データ型"],
+            estimated_minutes=60,
+            has_notes=False,
+        ),
+    ]
+
+    prompt = render_course_outline_prompt(
+        prerequisites=sample_prerequisites,
+        slide_summaries=summaries,
+    )
+
+    assert "Pythonの基礎文法習得" in prompt
+    assert "全コマ数: 2 コマ" in prompt
+    assert "スライド 1: イントロダクション" in prompt
+    assert "トピック: Python, 環境設定" in prompt
+    assert "※補足メモあり" in prompt
+    assert "スライド 2: 基本文法" in prompt
+
+
+def test_render_session_detail_prompt(sample_prerequisites: Prerequisites) -> None:
+    from vissho.config import ColumnDefinition
+    from vissho.llm.client import render_session_detail_prompt
+
+    columns = [
+        ColumnDefinition(name="topic", description="単元"),
+        ColumnDefinition(name="activities", description="授業活動"),
+        ColumnDefinition(name="allocated_minutes", description="配当時間"),
+        ColumnDefinition(name="source_slides", description="出典スライド"),
+    ]
+
+    dummy_analyses = [
+        {
+            "slide_number": 1,
+            "analysis": {
+                "title": "環境構築",
+                "topics": ["VSCode", "Python3"],
+                "key_points": ["インストーラーの実行"],
+                "suggested_activities": ["実習"],
+                "estimated_minutes": 45,
+            },
+            "supplementary_notes": ["パス設定に注意"],
+        }
+    ]
+
+    prompt = render_session_detail_prompt(
+        prerequisites=sample_prerequisites,
+        session_number=1,
+        session_title="開発環境のセットアップ",
+        columns=columns,
+        slide_analyses=dummy_analyses,
+    )
+
+    assert "第1コマ「開発環境のセットアップ」" in prompt
+    assert "コマの配当時間目標: 90 分" in prompt
+    assert "**topic**: 単元" in prompt
+    assert "■ スライド番号: 1" in prompt
+    assert "環境構築" in prompt
+    assert "パス設定に注意" in prompt
+
+
+def test_ollama_client_num_ctx_option() -> None:
+    client = OllamaClient(num_ctx=8192)
+    assert client.num_ctx == 8192
+    options = client._get_options()
+    assert options == {"num_ctx": 8192}
+
+    mock_response = {
+        "message": {"content": '{"dummy": 1}'}
+    }
+    with patch.object(client._client, "chat", return_value=mock_response) as mock_chat:
+        client.generate_structured(
+            prompt="test",
+            schema={"type": "object"},
+        )
+        mock_chat.assert_called_once()
+        call_kwargs = mock_chat.call_args[1]
+        assert call_kwargs["options"] == {"num_ctx": 8192}
+
+

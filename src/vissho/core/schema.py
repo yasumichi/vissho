@@ -95,6 +95,26 @@ def create_curriculum_plan_model(
     return create_model(model_name, **field_definitions)
 
 
+class SessionOutline(BaseModel):
+    """Outline for a single session in Step 2-A mapping."""
+
+    session_number: int = Field(..., ge=1, description="コマ番号 (1-indexed)")
+    session_title: str = Field(..., description="このコマの単元または主要テーマ")
+    slide_numbers: list[int] = Field(
+        default_factory=list, description="このコマに割り当てるスライド番号一覧"
+    )
+
+
+class CourseOutline(BaseModel):
+    """Course outline generated in Step 2-A mapping slides to sessions."""
+
+    sessions: list[SessionOutline] = Field(..., description="全コマのアウトライン一覧")
+    unassigned_slides: list[int] = Field(
+        default_factory=list,
+        description="指導案に割り当てられなかったスライド番号一覧（ある場合）",
+    )
+
+
 def get_json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """Generate a clean JSON schema dictionary suitable for Ollama's format: json."""
     return model.model_json_schema()

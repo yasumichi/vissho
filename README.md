@@ -15,7 +15,9 @@
 
 - **3段階処理パイプライン**:
   1. **Phase 1 (個別解析)**: スライド画像を個別に読み込み、概念・キーワード・推定所要時間・補足暗黙知を抽出（画像ハッシュによるキャッシュ対応）。
-  2. **Phase 2 (コマ割りマッピング)**: 設定された列定義に基づき動的に JSON スキーマを生成し、Ollama の構造化出力（`format: json`）で各コマに配分。全要素に出典スライド番号を付与しトレーサビリティを担保。
+  2. **Phase 2 (2段階コマ割りマッピング)**: 大量スライド時のコンテキスト長不足や JSON 出力途切れを防ぐ分割統治アプローチ。
+     - **Step 2-A (全体アウトライン策定)**: スライドの軽量要約一覧から各コマの単元名とスライド配分を決定。
+     - **Step 2-B (コマ別詳細生成)**: 当該コマに割り当てられたスライドの詳細情報のみを用いて動的スキーマに基づく指導案行を生成。全要素に出典スライド番号を付与しトレーサビリティを担保。
   3. **Phase 3 (全体整合・推敲)**: プログラムによる合計時間・スライド網羅性の厳密な検証と、LLM による授業展開・難易度曲線の推敲。
 - **動的スキーマ生成 (Dynamic Schema)**:
   - 出力表の列定義（列名、説明、列幅）を `config.yaml` で自由に変更可能。実行時に Pydantic モデルと Ollama 向け JSON Schema を自動構築。
@@ -35,6 +37,7 @@
 - [x] **動的スキーマ生成エンジン**: [`src/vissho/core/schema.py`](./src/vissho/core/schema.py)
   - 列定義からの動的 `InstructionRow` モデル生成
   - コマ単位（`SessionPlan`）および全体指導案（`CurriculumPlan`）モデル構築
+  - 2段階マッピング用アウトラインモデル（`CourseOutline`, `SessionOutline`）定義
   - Ollama の `format: json` 向け JSON Schema 生成
 - [x] **CLI 基盤 & 初期化コマンド**: [`src/vissho/cli.py`](./src/vissho/cli.py)
   - `vissho init`（カレントディレクトリに `config.yaml` の雛形を生成。上書き防止 & `--force` 対応）
@@ -44,23 +47,24 @@
 - [x] **中間キャッシュ機構**: [`src/vissho/utils/cache.py`](./src/vissho/utils/cache.py)
   - 画像ハッシュ・使用モデル・暗黙知補足メモの複合キーによる決定論的キャッシュ管理（`.vissho_cache/`）
 - [x] **LLM クライアント & プロンプト**: [`src/vissho/llm/client.py`](./src/vissho/llm/client.py), [`src/vissho/llm/prompts/`](./src/vissho/llm/prompts/)
-  - Jinja2 によるスライド解析プロンプト管理（前提条件・暗黙知メモの自動注入）
-  - Ollama Vision API 連携アダプタ（構造化 JSON 出力対応）
+  - Jinja2 による各種プロンプト管理（スライド個別解析、全体アウトライン策定、コマ別詳細行生成、整合性推敲）
+  - Ollama API 連携アダプタ（構造化 JSON 出力対応、`num_ctx` オプションおよび環境変数 `VISSHO_NUM_CTX` によるコンテキスト長指定対応）
 - [x] **Phase 1: スライド個別解析エンジン (`SlideAnalyzer`)**: [`src/vissho/pipeline/phase1_analyze.py`](./src/vissho/pipeline/phase1_analyze.py)
   - スライド画像からの主題、トピック、重要ポイント、学習活動、所要時間目安、留意点・暗黙知の抽出
   - 差分実行（キャッシュヒット時は推論スキップ）と完全なトレーサビリティ情報の保持
   - CLI コマンド `vissho analyze` による進捗表示（Rich Progress）と結果サマリー表の表示
 - [x] **Phase 2: コマ割りマッピングエンジン (`SessionMapper`)**: [`src/vissho/pipeline/phase2_map.py`](./src/vissho/pipeline/phase2_map.py)
-  - スライド解析結果を設定（前提条件、コマ数、時間、列定義）に基づき全コマへ教育的・論理的に配分
-  - 各行への出典スライド番号（トレーサビリティ）の付与および補足暗黙知の反映
+  - **2段階マッピング（分割統治）**による長大な資料へのスケーラビリティ担保
+  - Step 2-A: スライド軽量要約一覧に基づく全体アウトライン（単元名・スライド割り当て）の自動策定
+  - Step 2-B: 各コマに割り当てられたスライド詳細情報に基づくコマ別指導案行（展開、配当時間、留意点、出典スライド番号）の生成
   - 各コマの合計配当時間の決定論的整合性補正（各行の `allocated_minutes` の合算値と同期）
-  - CLI コマンド `vissho map` による全コマ指導案テーブル（Rich Table）表示および JSON 出力
+  - CLI コマンド `vissho map` および `vissho run` でのコマ単位進捗表示（Rich Status）
 - [x] **Phase 3: 全体整合・推敲エンジン (`ConsistencyReviewer`)**: [`src/vissho/pipeline/phase3_review.py`](./src/vissho/pipeline/phase3_review.py)
   - 決定論的検証器（[`src/vissho/core/validator.py`](./src/vissho/core/validator.py)）による時間計算・スライド網羅性（未言及スライド検出）検証
   - 検証レポートの指摘に基づく LLM 授業展開・難易度曲線の推敲と再調整
   - 3段階パイプライン統合オーケストレーター（[`src/vissho/pipeline/orchestrator.py`](./src/vissho/pipeline/orchestrator.py)）による一括制御
   - CLI コマンド `vissho run` による全パイプライン実行と検証結果サマリー表示
-- [x] **ユニットテスト**: 全 62 件パス、テストカバレッジ 91%
+- [x] **ユニットテスト**: 全 66 件パス、テストカバレッジ 91%
 - [x] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
   - [`src/vissho/exporter/excel.py`](./src/vissho/exporter/excel.py): プレーン仕様（太字・背景色なし）、テキスト折り返し（Wrap Text）、列幅・行高自動調整、コマ合計の Excel `SUM` 数式埋め込み、別シートへの整合性検証結果出力
   - [`src/vissho/exporter/markdown.py`](./src/vissho/exporter/markdown.py): 前提情報・ルーブリック・各コマの GFM テーブル、未割り当てスライド、検証レポートサマリー
@@ -74,7 +78,12 @@
 ### 必要要件
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- [Ollama](https://ollama.com/) (Vision モデル: `llama3.2-vision` 等)
+- [Ollama](https://ollama.com/) (Vision モデル: `qwen2.5-vl` 等)
+
+### 主な環境変数 (オプション)
+- `OLLAMA_HOST`: Ollama サーバーのホスト（デフォルト: `http://localhost:11434`）
+- `VISSHO_MODEL`: デフォルトで使用するモデル名（デフォルト: `qwen2.5-vl`）
+- `VISSHO_NUM_CTX`: Ollama のコンテキストウィンドウサイズ（例: `16384`, `32768`）
 
 ### インストール手順
 

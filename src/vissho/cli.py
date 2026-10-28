@@ -527,7 +527,9 @@ def run(
             elif stage == "phase1_slide":
                 status.update(f"[bold cyan]Phase 1: Analyzed slide {cur}/{tot}...[/bold cyan]")
             elif stage == "phase2_start":
-                status.update("[bold cyan]Phase 2: Mapping slides to class sessions...[/bold cyan]")
+                status.update("[bold cyan]Phase 2: Mapping outline and sessions...[/bold cyan]")
+            elif stage == "phase2_session":
+                status.update(f"[bold cyan]Phase 2: Generating session {cur}/{tot} details...[/bold cyan]")
             elif stage == "phase3_start":
                 status.update("[bold cyan]Phase 3: Validating & refining curriculum plan...[/bold cyan]")
 

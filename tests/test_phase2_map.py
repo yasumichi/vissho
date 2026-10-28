@@ -16,12 +16,27 @@ from vissho.pipeline.phase2_map import SessionMapper
 
 
 class FakeMappingClient:
-    """Fake LLM client that returns predefined structured responses."""
+    """Fake LLM client supporting 2-step structured mapping calls."""
 
-    def __init__(self, response_data: dict[str, Any]) -> None:
-        self.response_data = response_data
-        self.last_prompt: str = ""
+    def __init__(
+        self,
+        outline_response: dict[str, Any] | None = None,
+        session_responses: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.outline_response = outline_response or {
+            "sessions": [
+                {"session_number": 1, "session_title": "Web開発の基礎", "slide_numbers": [1]},
+                {"session_number": 2, "session_title": "HTML基本演習", "slide_numbers": [2]},
+            ],
+            "unassigned_slides": [],
+        }
+        self.session_responses = session_responses or []
+        self.prompts: list[str] = []
         self.call_count: int = 0
+
+    @property
+    def last_prompt(self) -> str:
+        return self.prompts[-1] if self.prompts else ""
 
     def analyze_slide(self, image_path: Any, prompt: str, model: Any = None) -> Any:
         raise NotImplementedError
@@ -34,8 +49,35 @@ class FakeMappingClient:
         system_prompt: str | None = None,
     ) -> dict[str, Any]:
         self.call_count += 1
-        self.last_prompt = prompt
-        return self.response_data
+        self.prompts.append(prompt)
+
+        # Check if schema is CourseOutline (Step 2-A)
+        schema_name = getattr(schema, "__name__", "")
+        if schema_name == "CourseOutline" or "slide_numbers" in str(schema):
+            return self.outline_response
+
+        # Step 2-B session responses (call_count >= 2)
+        sess_idx = self.call_count - 2
+        if 0 <= sess_idx < len(self.session_responses):
+            return self.session_responses[sess_idx]
+        if self.session_responses:
+            return self.session_responses[-1]
+
+        # Default fallback session response
+        return {
+            "session_number": sess_idx + 1,
+            "session_title": f"第{sess_idx + 1}コマ",
+            "rows": [
+                {
+                    "session_number": f"第{sess_idx + 1}コマ",
+                    "topic": "学習項目",
+                    "activities": "講義と演習",
+                    "allocated_minutes": 90,
+                    "source_slides": [sess_idx + 1],
+                }
+            ],
+            "total_minutes": 90,
+        }
 
 
 @pytest.fixture
@@ -97,88 +139,121 @@ def test_session_mapper_success(
     sample_config: VisshoConfig,
     sample_slide_analyses: list[SlideAnalysisResult],
 ) -> None:
-    mock_payload = {
+    outline = {
         "sessions": [
             {
                 "session_number": 1,
                 "session_title": "Web開発の基礎と環境構築",
-                "rows": [
-                    {
-                        "session_number": "第1コマ",
-                        "topic": "Webの仕組みと基本",
-                        "activities": "スライドを用いた講義と概要説明",
-                        "allocated_minutes": 45,
-                        "source_slides": [1],
-                    },
-                    {
-                        "session_number": "第1コマ",
-                        "topic": "HTML基本タグの記法",
-                        "activities": "エディタを用いたハンズオン作成演習",
-                        "allocated_minutes": 45,
-                        "source_slides": [2],
-                    },
-                ],
-                "total_minutes": 90,
-            }
+                "slide_numbers": [1],
+            },
+            {
+                "session_number": 2,
+                "session_title": "HTML基本タグと演習",
+                "slide_numbers": [2],
+            },
         ],
         "unassigned_slides": [],
     }
+    session_1 = {
+        "session_number": 1,
+        "session_title": "Web開発の基礎と環境構築",
+        "rows": [
+            {
+                "session_number": "第1コマ",
+                "topic": "Webの仕組みと基本",
+                "activities": "スライドを用いた講義と概要説明",
+                "allocated_minutes": 90,
+                "source_slides": [1],
+            }
+        ],
+        "total_minutes": 90,
+    }
+    session_2 = {
+        "session_number": 2,
+        "session_title": "HTML基本タグと演習",
+        "rows": [
+            {
+                "session_number": "第2コマ",
+                "topic": "HTML基本タグの記法",
+                "activities": "エディタを用いたハンズオン作成演習",
+                "allocated_minutes": 90,
+                "source_slides": [2],
+            }
+        ],
+        "total_minutes": 90,
+    }
 
-    client = FakeMappingClient(mock_payload)
+    client = FakeMappingClient(
+        outline_response=outline,
+        session_responses=[session_1, session_2],
+    )
     mapper = SessionMapper(config=sample_config, client=client)
 
     result = mapper.map_sessions(sample_slide_analyses)
 
-    assert client.call_count == 1
-    assert "Web開発入門" in client.last_prompt
-    assert "導入・開発環境" in client.last_prompt
-    assert "タグの基本と演習" in client.last_prompt
+    # 1 outline call + 2 session detail calls = 3 calls
+    assert client.call_count == 3
+    # First prompt is course outline
+    assert "Web開発入門" in client.prompts[0]
+    assert "導入・開発環境" in client.prompts[0]
+    # Subsequent prompts are session details
+    assert "第1コマ" in client.prompts[1]
+    assert "第2コマ" in client.prompts[2]
 
     sessions = getattr(result, "sessions")
-    assert len(sessions) == 1
-    session_1 = sessions[0]
-    assert session_1.session_number == 1
-    assert session_1.session_title == "Web開発の基礎と環境構築"
-    assert session_1.total_minutes == 90
-    assert len(session_1.rows) == 2
-    assert session_1.rows[0].topic == "Webの仕組みと基本"
-    assert session_1.rows[0].source_slides == [1]
-    assert session_1.rows[1].source_slides == [2]
+    assert len(sessions) == 2
+    assert sessions[0].session_number == 1
+    assert sessions[0].session_title == "Web開発の基礎と環境構築"
+    assert sessions[0].total_minutes == 90
+    assert sessions[0].rows[0].topic == "Webの仕組みと基本"
+    assert sessions[0].rows[0].source_slides == [1]
+
+    assert sessions[1].session_number == 2
+    assert sessions[1].session_title == "HTML基本タグと演習"
+    assert sessions[1].total_minutes == 90
+    assert sessions[1].rows[0].topic == "HTML基本タグの記法"
+    assert sessions[1].rows[0].source_slides == [2]
 
 
 def test_session_mapper_recalculates_total_minutes(
     sample_config: VisshoConfig,
     sample_slide_analyses: list[SlideAnalysisResult],
 ) -> None:
-    # LLM returned total_minutes=0 by mistake
-    mock_payload = {
-        "sessions": [
+    # LLM returned total_minutes=0 by mistake in session detail
+    session_with_zero = {
+        "session_number": 1,
+        "session_title": "Web入門",
+        "rows": [
             {
-                "session_number": 1,
-                "session_title": "Web入門",
-                "rows": [
-                    {
-                        "session_number": "1",
-                        "topic": "導入",
-                        "activities": "解説",
-                        "allocated_minutes": 40,
-                        "source_slides": [1],
-                    },
-                    {
-                        "session_number": "1",
-                        "topic": "演習",
-                        "activities": "コーディング",
-                        "allocated_minutes": 50,
-                        "source_slides": [2],
-                    },
-                ],
-                "total_minutes": 0,
-            }
+                "session_number": "1",
+                "topic": "導入",
+                "activities": "解説",
+                "allocated_minutes": 40,
+                "source_slides": [1],
+            },
+            {
+                "session_number": "1",
+                "topic": "演習",
+                "activities": "コーディング",
+                "allocated_minutes": 50,
+                "source_slides": [2],
+            },
+        ],
+        "total_minutes": 0,
+    }
+
+    outline = {
+        "sessions": [
+            {"session_number": 1, "session_title": "Web入門", "slide_numbers": [1, 2]},
+            {"session_number": 2, "session_title": "まとめ", "slide_numbers": []},
         ],
         "unassigned_slides": [],
     }
 
-    client = FakeMappingClient(mock_payload)
+    client = FakeMappingClient(
+        outline_response=outline,
+        session_responses=[session_with_zero],
+    )
     mapper = SessionMapper(config=sample_config, client=client)
 
     result = mapper.map_sessions(sample_slide_analyses)
@@ -199,28 +274,34 @@ def test_session_mapper_with_unassigned_slides(
     sample_config: VisshoConfig,
     sample_slide_analyses: list[SlideAnalysisResult],
 ) -> None:
-    mock_payload = {
+    outline = {
         "sessions": [
-            {
-                "session_number": 1,
-                "session_title": "Web入門",
-                "rows": [
-                    {
-                        "session_number": "1",
-                        "topic": "導入",
-                        "activities": "解説",
-                        "allocated_minutes": 90,
-                        "source_slides": [1],
-                    }
-                ],
-                "total_minutes": 90,
-            }
+            {"session_number": 1, "session_title": "Web入門", "slide_numbers": [1]},
+            {"session_number": 2, "session_title": "Web基礎", "slide_numbers": []},
         ],
         "unassigned_slides": [2],
     }
 
-    client = FakeMappingClient(mock_payload)
+    client = FakeMappingClient(outline_response=outline)
     mapper = SessionMapper(config=sample_config, client=client)
 
     result = mapper.map_sessions(sample_slide_analyses)
     assert getattr(result, "unassigned_slides") == [2]
+
+
+def test_session_mapper_progress_callback(
+    sample_config: VisshoConfig,
+    sample_slide_analyses: list[SlideAnalysisResult],
+) -> None:
+    client = FakeMappingClient()
+    mapper = SessionMapper(config=sample_config, client=client)
+
+    steps: list[tuple[int, int]] = []
+
+    def on_progress(cur: int, tot: int) -> None:
+        steps.append((cur, tot))
+
+    mapper.map_sessions(sample_slide_analyses, progress_callback=on_progress)
+
+    # total_sessions is 2
+    assert steps == [(1, 2), (2, 2)]

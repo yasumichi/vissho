@@ -48,24 +48,32 @@ class FakePipelineClient:
         system_prompt: str | None = None,
     ) -> dict[str, Any]:
         self.generate_count += 1
-        # Return a valid 1-session curriculum plan
+        schema_name = getattr(schema, "__name__", "")
+        if schema_name == "CourseOutline" or "slide_numbers" in str(schema):
+            return {
+                "sessions": [
+                    {
+                        "session_number": 1,
+                        "session_title": "第1コマ: 総合学習",
+                        "slide_numbers": [1],
+                    }
+                ],
+                "unassigned_slides": [],
+            }
+
+        # Step 2-B: single session detail
         return {
-            "sessions": [
+            "session_number": 1,
+            "session_title": "第1コマ: 総合学習",
+            "rows": [
                 {
-                    "session_number": 1,
-                    "session_title": "第1コマ: 総合学習",
-                    "rows": [
-                        {
-                            "session_number": "第1コマ",
-                            "topic": "総合学習",
-                            "allocated_minutes": 90,
-                            "source_slides": [1],
-                        }
-                    ],
-                    "total_minutes": 90,
+                    "session_number": "第1コマ",
+                    "topic": "総合学習",
+                    "allocated_minutes": 90,
+                    "source_slides": [1],
                 }
             ],
-            "unassigned_slides": [],
+            "total_minutes": 90,
         }
 
 
@@ -114,8 +122,9 @@ def test_orchestrator_end_to_end(tmp_path: Path, sample_config: VisshoConfig) ->
     assert len(result.slide_analyses) == 1
     assert result.validation_report.is_valid is True
     assert fake_client.analyze_count == 1
-    assert fake_client.generate_count == 1  # Phase 2 called (Phase 3 skipped because already valid)
+    assert fake_client.generate_count == 2  # Phase 2 (outline + 1 session), Phase 3 skipped because valid
     assert "phase1_start" in stage_events
     assert "phase2_start" in stage_events
+    assert "phase2_session" in stage_events
     assert "phase3_start" in stage_events
     assert "complete" in stage_events
