@@ -89,3 +89,36 @@ def test_export_to_json_with_metadata(sample_config: VisshoConfig, sample_plan_d
     assert "plan" in loaded
     assert "validation" in loaded
     assert loaded["validation"]["is_valid"] is True
+
+
+def test_export_slide_analyses_to_json(tmp_path: Path) -> None:
+    from vissho.exporter.json_export import export_slide_analyses_to_json
+    from vissho.llm.client import SlideAnalysisOutput
+    from vissho.pipeline.phase1_analyze import SlideAnalysisResult
+
+    dummy_results = [
+        SlideAnalysisResult(
+            slide_number=1,
+            image_path="/path/to/slide_01.png",
+            image_hash="hash1",
+            analysis=SlideAnalysisOutput(
+                title="導入・環境構築",
+                topics=["Python"],
+                key_points=["Python概要"],
+                suggested_activities=["講義"],
+                estimated_minutes=30,
+                instructor_notes=[],
+            ),
+        )
+    ]
+
+    target_file = tmp_path / "slides.json"
+    result = export_slide_analyses_to_json(dummy_results, output_path=target_file)
+
+    assert target_file.exists()
+    loaded = json.loads(result)
+    assert isinstance(loaded, list)
+    assert len(loaded) == 1
+    assert loaded[0]["slide_number"] == 1
+    assert loaded[0]["analysis"]["title"] == "導入・環境構築"
+

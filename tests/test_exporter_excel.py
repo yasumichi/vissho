@@ -268,3 +268,82 @@ def test_export_to_excel_with_validation_errors(sample_config: VisshoConfig, tmp
     assert "警告一覧:" in text
     assert "未言及（欠落）スライド:" in text
     assert "不正なスライド参照:" in text
+
+
+def test_export_slide_analyses_to_excel(tmp_path: Path) -> None:
+    from vissho.exporter.excel import export_slide_analyses_to_excel
+    from vissho.llm.client import SlideAnalysisOutput
+    from vissho.pipeline.phase1_analyze import SlideAnalysisResult
+
+    dummy_results = [
+        SlideAnalysisResult(
+            slide_number=1,
+            image_path="/path/to/slide_01.png",
+            image_hash="hash1",
+            analysis=SlideAnalysisOutput(
+                title="導入・環境構築",
+                topics=["Python", "VSCode"],
+                key_points=["Pythonの概要", "エディタの導入"],
+                suggested_activities=["講義", "実習"],
+                estimated_minutes=30,
+                instructor_notes=["インストーラーのバージョンに注意"],
+            ),
+            supplementary_notes=["PCのネットワーク接続を確認"],
+        ),
+        SlideAnalysisResult(
+            slide_number=2,
+            image_path="/path/to/slide_02.png",
+            image_hash="hash2",
+            analysis=SlideAnalysisOutput(
+                title="基本構文と変数",
+                topics=["変数", "データ型"],
+                key_points=["代入と参照"],
+                suggested_activities=["ハンズオン"],
+                estimated_minutes=60,
+                instructor_notes=[],
+            ),
+        ),
+    ]
+
+    target_file = tmp_path / "slide_analyses.xlsx"
+    wb = export_slide_analyses_to_excel(
+        slide_analyses=dummy_results,
+        output_path=target_file,
+        title="Python講座 スライド解析目録",
+    )
+
+    assert target_file.exists()
+    assert "スライド解析一覧" in wb.sheetnames
+    ws = wb["スライド解析一覧"]
+
+    # Check title block
+    assert "【Python講座 スライド解析目録】" in ws.cell(row=1, column=1).value
+    assert "対象スライド数: 2 枚" in ws.cell(row=2, column=1).value
+
+    # Check headers (row 4)
+    expected_headers = [
+        "スライド番号", "タイトル", "主なトピック", "重要ポイント",
+        "想定学習活動", "目安時間（分）", "指導上の留意点・暗黙知", "画像ファイル"
+    ]
+    for col_idx, expected in enumerate(expected_headers, start=1):
+        assert ws.cell(row=4, column=col_idx).value == expected
+
+    # Check row 1 (row 5)
+    assert ws.cell(row=5, column=1).value == 1
+    assert ws.cell(row=5, column=2).value == "導入・環境構築"
+    assert ws.cell(row=5, column=3).value == "Python, VSCode"
+    assert "・Pythonの概要" in ws.cell(row=5, column=4).value
+    assert ws.cell(row=5, column=5).value == "講義, 実習"
+    assert ws.cell(row=5, column=6).value == 30
+    assert "インストーラーのバージョンに注意" in ws.cell(row=5, column=7).value
+    assert "PCのネットワーク接続を確認" in ws.cell(row=5, column=7).value
+    assert ws.cell(row=5, column=8).value == "slide_01.png"
+
+    # Check row 2 (row 6)
+    assert ws.cell(row=6, column=1).value == 2
+    assert ws.cell(row=6, column=6).value == 60
+
+    # Check total row (row 7)
+    assert ws.cell(row=7, column=1).value == "合計目安時間"
+    assert ws.cell(row=7, column=6).value == "=SUM(F5:F6)"
+

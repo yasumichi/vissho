@@ -58,3 +58,38 @@ def export_to_json(
             f.write(json_str)
 
     return json_str
+
+
+def export_slide_analyses_to_json(
+    slide_analyses: list[Any],
+    output_path: str | Path | None = None,
+    indent: int = 2,
+) -> str:
+    """Export Phase 1 slide analysis results to a JSON formatted string and optionally save to file.
+
+    Args:
+        slide_analyses: List of SlideAnalysisResult instances or dictionaries.
+        output_path: Optional file path to write JSON.
+        indent: Indentation level for JSON formatting.
+
+    Returns:
+        Formatted JSON string.
+    """
+    items: list[dict[str, Any]] = []
+    for item in slide_analyses:
+        if isinstance(item, BaseModel):
+            items.append(item.model_dump(mode="json"))
+        elif isinstance(item, dict):
+            items.append(item)
+        else:
+            items.append({"slide_number": getattr(item, "slide_number", 0)})
+
+    json_str = json.dumps(items, ensure_ascii=False, indent=indent)
+
+    if output_path is not None:
+        target_path = Path(output_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with target_path.open("w", encoding="utf-8") as f:
+            f.write(json_str)
+
+    return json_str

@@ -53,6 +53,7 @@
   - スライド画像からの主題、トピック、重要ポイント、学習活動、所要時間目安、留意点・暗黙知の抽出
   - 差分実行（キャッシュヒット時は推論スキップ）と完全なトレーサビリティ情報の保持
   - CLI コマンド `vissho analyze` による進捗表示（Rich Progress）と結果サマリー表の表示
+  - 解析結果の Excel (`.xlsx`) / Markdown (`.md`) / JSON (`.json`) 出力対応
 - [x] **Phase 2: コマ割りマッピングエンジン (`SessionMapper`)**: [`src/vissho/pipeline/phase2_map.py`](./src/vissho/pipeline/phase2_map.py)
   - **2段階マッピング（分割統治）**による長大な資料へのスケーラビリティ担保
   - Step 2-A: スライド軽量要約一覧に基づく全体アウトライン（単元名・スライド割り当て）の自動策定
@@ -64,12 +65,12 @@
   - 検証レポートの指摘に基づく LLM 授業展開・難易度曲線の推敲と再調整
   - 3段階パイプライン統合オーケストレーター（[`src/vissho/pipeline/orchestrator.py`](./src/vissho/pipeline/orchestrator.py)）による一括制御
   - CLI コマンド `vissho run` による全パイプライン実行と検証結果サマリー表示
-- [x] **ユニットテスト**: 全 66 件パス、テストカバレッジ 91%
+- [x] **ユニットテスト**: 全 71 件パス、テストカバレッジ 90%
 - [x] **エクスポーター**: Excel (`openpyxl`), Markdown, JSON
-  - [`src/vissho/exporter/excel.py`](./src/vissho/exporter/excel.py): プレーン仕様（太字・背景色なし）、テキスト折り返し（Wrap Text）、列幅・行高自動調整、コマ合計の Excel `SUM` 数式埋め込み、別シートへの整合性検証結果出力
-  - [`src/vissho/exporter/markdown.py`](./src/vissho/exporter/markdown.py): 前提情報・ルーブリック・各コマの GFM テーブル、未割り当てスライド、検証レポートサマリー
-  - [`src/vissho/exporter/json_export.py`](./src/vissho/exporter/json_export.py): 生データ出力およびメタデータ（前提条件・列定義・検証結果）ラッパー出力対応
-- [x] **プレビュー & エクスポート CLI (`vissho preview`)**: 生成済み JSON からのターミナル（Rich Table）、Markdown、Excel、JSON への再プレビュー・出力変換
+  - [`src/vissho/exporter/excel.py`](./src/vissho/exporter/excel.py): プレーン仕様（太字・背景色なし）、テキスト折り返し（Wrap Text）、列幅・行高自動調整、カリキュラム指導案およびスライド解析一覧の Excel 出力（`SUM` 数式埋め込み対応）
+  - [`src/vissho/exporter/markdown.py`](./src/vissho/exporter/markdown.py): カリキュラム指導案およびスライド解析一覧の GFM テーブル出力
+  - [`src/vissho/exporter/json_export.py`](./src/vissho/exporter/json_export.py): 生データ出力、メタデータラッパー出力、スライド解析一覧 JSON 出力対応
+- [x] **プレビュー & エクスポート CLI (`vissho preview`)**: 生成済みカリキュラム JSON またはスライド解析 JSON からのターミナル（Rich Table）、Markdown、Excel、JSON への再プレビュー・出力変換
 
 ---
 
@@ -168,10 +169,23 @@ supplementary_notes:
 
 ### 5.3 スライドの個別解析 (`vissho analyze`)
 
-指定ディレクトリ内のスライド画像を順次読み込み、各スライドの教育要素（主題、トピック、配当目安時間など）を個別に解析してキャッシュ（`.vissho_cache/`）に保存します。
+指定ディレクトリ内のスライド画像を順次読み込み、各スライドの教育要素（主題、トピック、配当目安時間など）を個別に解析してキャッシュ（`.vissho_cache/`）に保存します。結果の一覧を Excel・Markdown・JSON ファイルとしてエクスポート可能です。
 
 ```bash
+# ターミナル上で解析結果サマリーを表示（キャッシュ保存）
 uv run vissho analyze slides/
+
+# 解析結果一覧を Excel ワークブック (.xlsx) として出力
+uv run vissho analyze slides/ -x output/slide_analyses.xlsx
+
+# 解析結果一覧を Markdown (.md) として出力
+uv run vissho analyze slides/ --md output/slide_analyses.md
+
+# 解析結果を JSON ファイルに保存（再利用・プレビュー用）
+uv run vissho analyze slides/ -o output/slide_analyses.json
+
+# Excel, Markdown, JSON を同時に出力
+uv run vissho analyze slides/ -x output/slides.xlsx --md output/slides.md -o output/slides.json
 ```
 
 主なオプション：
@@ -180,6 +194,9 @@ uv run vissho analyze slides/
 - `-p, --pattern <glob>`: 対象画像のマッチパターン（デフォルト: `*.png`）
 - `--no-cache`: 既存キャッシュを無視して強制的に再解析
 - `--cache-dir <dir>`: キャッシュ保存先ディレクトリ（デフォルト: `.vissho_cache`）
+- `-x, --excel <path>`: スライド解析結果一覧の Excel ワークブック (.xlsx) 出力先
+- `--md, --markdown <path>`: スライド解析結果一覧の Markdown (.md) 出力先
+- `-o, --output <path>`: 出力先パス（拡張子 `.xlsx`, `.md`, `.json` に応じて自動判定、または JSON）
 
 ### 5.4 コマ割りマッピング (`vissho map`)
 

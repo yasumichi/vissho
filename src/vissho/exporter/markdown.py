@@ -155,3 +155,81 @@ def export_to_markdown(
             f.write(content)
 
     return content
+
+
+def export_slide_analyses_to_markdown(
+    slide_analyses: list[Any],
+    output_path: str | Path | None = None,
+    title: str = "スライド解析結果一覧",
+) -> str:
+    """Export Phase 1 slide analysis results to a GitHub-Flavored Markdown table.
+
+    Args:
+        slide_analyses: List of SlideAnalysisResult instances or dictionaries.
+        output_path: Optional file path to write Markdown.
+        title: Title of the document.
+
+    Returns:
+        Generated Markdown string.
+    """
+    lines: list[str] = [
+        f"# {title}",
+        "",
+        f"- **対象スライド数**: {len(slide_analyses)} 枚",
+        "",
+        "| スライド番号 | タイトル | 主なトピック | 重要ポイント | 想定学習活動 | 目安時間（分） | 指導上の留意点・暗黙知 | 画像ファイル |",
+        "| :---: | :--- | :--- | :--- | :--- | ---: | :--- | :--- |",
+    ]
+
+    total_est_minutes = 0
+
+    for item in slide_analyses:
+        if isinstance(item, BaseModel):
+            item_dict = item.model_dump(mode="json")
+        elif isinstance(item, dict):
+            item_dict = item
+        else:
+            item_dict = {"slide_number": getattr(item, "slide_number", 0)}
+
+        analysis = item_dict.get("analysis", {})
+        if isinstance(analysis, BaseModel):
+            analysis = analysis.model_dump(mode="json")
+
+        slide_num = item_dict.get("slide_number", 0)
+        slide_title = analysis.get("title", "")
+        topics = ", ".join(analysis.get("topics", []))
+        key_points = "<br>".join(f"・{p}" for p in analysis.get("key_points", []))
+        activities = ", ".join(analysis.get("suggested_activities", []))
+        est_minutes = analysis.get("estimated_minutes", 0)
+        total_est_minutes += est_minutes if isinstance(est_minutes, int) else 0
+
+        all_notes: list[str] = []
+        if analysis.get("instructor_notes"):
+            all_notes.extend(analysis["instructor_notes"])
+        if item_dict.get("supplementary_notes"):
+            all_notes.extend(item_dict["supplementary_notes"])
+        notes_str = "<br>".join(f"・{n}" for n in all_notes) if all_notes else ""
+
+        raw_path = item_dict.get("image_path", "")
+        img_name = Path(raw_path).name if raw_path else ""
+
+        lines.append(
+            f"| {slide_num} | {_escape_markdown_cell(slide_title)} | "
+            f"{_escape_markdown_cell(topics)} | {_escape_markdown_cell(key_points)} | "
+            f"{_escape_markdown_cell(activities)} | {est_minutes} | "
+            f"{_escape_markdown_cell(notes_str)} | {_escape_markdown_cell(img_name)} |"
+        )
+
+    lines.append("")
+    lines.append(f"**合計推定所要時間**: {total_est_minutes} 分")
+    lines.append("")
+
+    content = "\n".join(lines).rstrip() + "\n"
+
+    if output_path is not None:
+        target_path = Path(output_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with target_path.open("w", encoding="utf-8") as f:
+            f.write(content)
+
+    return content

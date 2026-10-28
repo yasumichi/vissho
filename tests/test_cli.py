@@ -119,6 +119,105 @@ def test_analyze_success(tmp_path: Path) -> None:
         mock_analyze.assert_called_once()
 
 
+def test_analyze_with_export_options(tmp_path: Path) -> None:
+    """Test vissho analyze with --excel, --markdown, and -o options."""
+    from unittest.mock import patch
+    from PIL import Image
+    from vissho.llm.client import SlideAnalysisOutput
+    from vissho.pipeline.phase1_analyze import SlideAnalyzer, SlideAnalysisResult
+
+    config_file = tmp_path / "config.yaml"
+    runner.invoke(app, ["init", "-o", str(config_file)])
+
+    slides_dir = tmp_path / "slides"
+    slides_dir.mkdir()
+    img = Image.new("RGB", (10, 10), color="blue")
+    img.save(slides_dir / "slide_01.png", format="PNG")
+
+    dummy_result = SlideAnalysisResult(
+        slide_number=1,
+        image_path=str((slides_dir / "slide_01.png").resolve()),
+        image_hash="dummyhash",
+        analysis=SlideAnalysisOutput(
+            title="テストスライド",
+            topics=["トピック1"],
+            key_points=["要点1"],
+            suggested_activities=["解説"],
+            estimated_minutes=20,
+            instructor_notes=[],
+        ),
+        supplementary_notes=[],
+        cached=False,
+    )
+
+    excel_out = tmp_path / "slides.xlsx"
+    md_out = tmp_path / "slides.md"
+    json_out = tmp_path / "slides.json"
+
+    with patch.object(SlideAnalyzer, "analyze_slide", return_value=dummy_result):
+        result = runner.invoke(
+            app,
+            [
+                "analyze",
+                str(slides_dir),
+                "-c",
+                str(config_file),
+                "-x",
+                str(excel_out),
+                "--md",
+                str(md_out),
+                "-o",
+                str(json_out),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert excel_out.exists()
+        assert md_out.exists()
+        assert json_out.exists()
+        assert "Saved slide analyses Excel workbook to:" in result.stdout
+        assert "Saved slide analyses Markdown to:" in result.stdout
+        assert "Saved slide analyses JSON to:" in result.stdout
+
+
+def test_preview_slide_analyses(tmp_path: Path) -> None:
+    """Test vissho preview with slide analysis JSON."""
+    import json
+
+    slides_json = tmp_path / "slides.json"
+    dummy_data = [
+        {
+            "slide_number": 1,
+            "image_path": "slide_01.png",
+            "image_hash": "hash1",
+            "analysis": {
+                "title": "スライドタイトル",
+                "topics": ["トピックA"],
+                "key_points": ["ポイントA"],
+                "suggested_activities": ["演習"],
+                "estimated_minutes": 30,
+                "instructor_notes": [],
+            },
+            "supplementary_notes": [],
+            "cached": True,
+        }
+    ]
+    slides_json.write_text(json.dumps(dummy_data, ensure_ascii=False), encoding="utf-8")
+
+    # Preview in terminal
+    res_term = runner.invoke(app, ["preview", str(slides_json)])
+    assert res_term.exit_code == 0
+    assert "Slide Analysis Results (Phase 1)" in res_term.stdout
+    assert "スライドタイトル" in res_term.stdout
+
+    # Export to Excel from preview
+    out_xlsx = tmp_path / "preview_slides.xlsx"
+    res_excel = runner.invoke(app, ["preview", str(slides_json), "-f", "excel", "-o", str(out_xlsx)])
+    assert res_excel.exit_code == 0
+    assert out_xlsx.exists()
+
+
+
 def test_map_command_success(tmp_path: Path) -> None:
     """Test vissho map runs successfully and outputs curriculum plan table and JSON."""
     from unittest.mock import patch

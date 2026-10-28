@@ -180,3 +180,42 @@ def test_export_to_markdown_with_rubric_and_errors(tmp_path: Path) -> None:
     assert "❌ 配当時間不足" in result
     assert "⚠️ 演習時間が短いです。" in result
     assert "❌ 差分あり" in result
+
+
+def test_export_slide_analyses_to_markdown(tmp_path: Path) -> None:
+    from vissho.exporter.markdown import export_slide_analyses_to_markdown
+    from vissho.llm.client import SlideAnalysisOutput
+    from vissho.pipeline.phase1_analyze import SlideAnalysisResult
+
+    dummy_results = [
+        SlideAnalysisResult(
+            slide_number=1,
+            image_path="/path/to/slide_01.png",
+            image_hash="hash1",
+            analysis=SlideAnalysisOutput(
+                title="導入・環境構築",
+                topics=["Python", "VSCode"],
+                key_points=["Pythonの概要", "エディタの導入"],
+                suggested_activities=["講義"],
+                estimated_minutes=30,
+                instructor_notes=["メモ1"],
+            ),
+            supplementary_notes=["メモ2"],
+        )
+    ]
+
+    target_file = tmp_path / "slides.md"
+    result = export_slide_analyses_to_markdown(
+        slide_analyses=dummy_results,
+        output_path=target_file,
+        title="スライド解析目録",
+    )
+
+    assert target_file.exists()
+    assert target_file.read_text(encoding="utf-8") == result
+    assert "# スライド解析目録" in result
+    assert "**対象スライド数**: 1 枚" in result
+    assert "| スライド番号 | タイトル | 主なトピック | 重要ポイント | 想定学習活動 | 目安時間（分） | 指導上の留意点・暗黙知 | 画像ファイル |" in result
+    assert "| 1 | 導入・環境構築 | Python, VSCode | ・Pythonの概要<br>・エディタの導入 | 講義 | 30 | ・メモ1<br>・メモ2 | slide_01.png |" in result
+    assert "**合計推定所要時間**: 30 分" in result
+

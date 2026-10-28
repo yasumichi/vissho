@@ -392,3 +392,152 @@ def export_to_excel(
         wb.save(target_path)
 
     return wb
+
+
+def export_slide_analyses_to_excel(
+    slide_analyses: list[Any],
+    output_path: str | Path | None = None,
+    title: str = "スライド解析結果一覧",
+) -> Workbook:
+    """Export Phase 1 individual slide analysis results to an Excel workbook.
+
+    Follows plain design principles: Yu Gothic 10pt, no header bold/fill,
+    wrap text, automatic column widths and row heights, and a SUM formula
+    for total estimated minutes.
+
+    Args:
+        slide_analyses: List of SlideAnalysisResult instances or dictionaries.
+        output_path: Optional path to save the generated workbook (.xlsx).
+        title: Title placed in the header block.
+
+    Returns:
+        The openpyxl Workbook object.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "スライド解析一覧"
+    ws.views.sheetView[0].showGridLines = True
+
+    # Title block
+    ws.cell(row=1, column=1, value=f"【{title}】").font = _TITLE_FONT
+    ws.cell(row=2, column=1, value=f"対象スライド数: {len(slide_analyses)} 枚").font = _PLAIN_FONT
+
+    # Header definition
+    headers = [
+        ("スライド番号", 12, "center"),
+        ("タイトル", 26, "left"),
+        ("主なトピック", 28, "left"),
+        ("重要ポイント", 35, "left"),
+        ("想定学習活動", 28, "left"),
+        ("目安時間（分）", 14, "right"),
+        ("指導上の留意点・暗黙知", 35, "left"),
+        ("画像ファイル", 20, "left"),
+    ]
+
+    header_row = 4
+    ws.row_dimensions[header_row].height = 24.0
+
+    for col_idx, (col_name, col_width, align) in enumerate(headers, start=1):
+        cell = ws.cell(row=header_row, column=col_idx, value=col_name)
+        cell.font = _PLAIN_FONT
+        cell.border = _THIN_BORDER
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        col_letter = get_column_letter(col_idx)
+        ws.column_dimensions[col_letter].width = float(col_width)
+
+    current_row = header_row + 1
+    data_start_row = current_row
+
+    for item in slide_analyses:
+        if isinstance(item, BaseModel):
+            item_dict = item.model_dump(mode="python")
+        elif isinstance(item, dict):
+            item_dict = item
+        else:
+            item_dict = {"slide_number": getattr(item, "slide_number", 0)}
+
+        analysis = item_dict.get("analysis", {})
+        if isinstance(analysis, BaseModel):
+            analysis = analysis.model_dump(mode="python")
+
+        slide_num = item_dict.get("slide_number", 0)
+        slide_title = analysis.get("title", "")
+        topics = ", ".join(analysis.get("topics", []))
+        key_points = "\n".join(f"・{p}" for p in analysis.get("key_points", []))
+        activities = ", ".join(analysis.get("suggested_activities", []))
+        est_minutes = analysis.get("estimated_minutes", 0)
+
+        # Merge instructor notes and supplementary notes
+        all_notes: list[str] = []
+        if analysis.get("instructor_notes"):
+            all_notes.extend(analysis["instructor_notes"])
+        if item_dict.get("supplementary_notes"):
+            all_notes.extend(item_dict["supplementary_notes"])
+        notes_str = "\n".join(f"・{n}" for n in all_notes) if all_notes else ""
+
+        raw_path = item_dict.get("image_path", "")
+        img_name = Path(raw_path).name if raw_path else ""
+
+        row_values = [
+            slide_num,
+            slide_title,
+            topics,
+            key_points,
+            activities,
+            est_minutes,
+            notes_str,
+            img_name,
+        ]
+
+        # Calculate row height based on text content
+        max_lines = 1
+        for val, (col_name, col_width, _) in zip(row_values, headers, strict=False):
+            text = str(val or "")
+            if not text:
+                continue
+            col_lines = 0
+            for paragraph in text.split("\n"):
+                char_units = sum(2 if ord(c) > 127 else 1 for c in paragraph)
+                needed = max(1, (char_units + col_width - 1) // col_width)
+                col_lines += needed
+            max_lines = max(max_lines, col_lines)
+
+        row_h = min(max(20.0, max_lines * 16.0 + 4.0), 300.0)
+        ws.row_dimensions[current_row].height = row_h
+
+        for col_idx, (val, (_, _, align)) in enumerate(zip(row_values, headers, strict=False), start=1):
+            cell = ws.cell(row=current_row, column=col_idx, value=val)
+            cell.font = _PLAIN_FONT
+            cell.border = _THIN_BORDER
+            cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
+            if col_idx == 6:  # estimated_minutes
+                cell.number_format = "#,##0"
+
+        current_row += 1
+
+    data_end_row = current_row - 1
+
+    # Total row if there is at least one data row
+    if data_end_row >= data_start_row:
+        total_row = current_row
+        ws.row_dimensions[total_row].height = 24.0
+
+        for col_idx in range(1, len(headers) + 1):
+            c = ws.cell(row=total_row, column=col_idx)
+            c.font = _PLAIN_FONT
+            c.border = _THIN_BORDER
+
+        label_cell = ws.cell(row=total_row, column=1, value="合計目安時間")
+        label_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        sum_cell = ws.cell(row=total_row, column=6)
+        sum_cell.value = f"=SUM(F{data_start_row}:F{data_end_row})"
+        sum_cell.number_format = "#,##0"
+        sum_cell.alignment = Alignment(horizontal="right", vertical="center")
+
+    if output_path is not None:
+        target_path = Path(output_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(target_path)
+
+    return wb

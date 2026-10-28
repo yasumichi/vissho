@@ -9,7 +9,14 @@ from rich.table import Table
 
 from vissho.config import DEFAULT_CONFIG_TEMPLATE, VisshoConfig, load_config
 from vissho.core.validator import ValidationReport, validate_curriculum_plan
-from vissho.exporter import export_to_excel, export_to_json, export_to_markdown
+from vissho.exporter import (
+    export_slide_analyses_to_excel,
+    export_slide_analyses_to_json,
+    export_slide_analyses_to_markdown,
+    export_to_excel,
+    export_to_json,
+    export_to_markdown,
+)
 from vissho.llm.client import OllamaClient
 from vissho.pipeline.orchestrator import PipelineOrchestrator
 from vissho.pipeline.phase1_analyze import SlideAnalysisResult, SlideAnalyzer
@@ -64,6 +71,48 @@ def _export_outputs(
                 include_metadata=False,
             )
             console.print(f"[bold green]Saved JSON plan to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+
+
+def _export_slide_analyses_outputs(
+    results: list[Any],
+    output: Path | None = None,
+    excel: Path | None = None,
+    markdown: Path | None = None,
+    title: str = "スライド解析結果一覧",
+) -> None:
+    """Save slide analysis results in requested export formats."""
+    # 1. Explicit --excel option
+    if excel:
+        export_slide_analyses_to_excel(results, output_path=excel, title=title)
+        console.print(
+            f"[bold green]Saved slide analyses Excel workbook to:[/bold green] [cyan]{excel.resolve()}[/cyan]"
+        )
+
+    # 2. Explicit --markdown option
+    if markdown:
+        export_slide_analyses_to_markdown(results, output_path=markdown, title=title)
+        console.print(
+            f"[bold green]Saved slide analyses Markdown to:[/bold green] [cyan]{markdown.resolve()}[/cyan]"
+        )
+
+    # 3. Handle --output option based on file extension
+    if output:
+        suffix = output.suffix.lower()
+        if suffix in (".xlsx", ".xlsm", ".xltx"):
+            export_slide_analyses_to_excel(results, output_path=output, title=title)
+            console.print(
+                f"[bold green]Saved slide analyses Excel workbook to:[/bold green] [cyan]{output.resolve()}[/cyan]"
+            )
+        elif suffix in (".md", ".markdown"):
+            export_slide_analyses_to_markdown(results, output_path=output, title=title)
+            console.print(
+                f"[bold green]Saved slide analyses Markdown to:[/bold green] [cyan]{output.resolve()}[/cyan]"
+            )
+        else:
+            export_slide_analyses_to_json(results, output_path=output)
+            console.print(
+                f"[bold green]Saved slide analyses JSON to:[/bold green] [cyan]{output.resolve()}[/cyan]"
+            )
 
 
 @app.callback()
@@ -153,6 +202,30 @@ def analyze(
             help="Directory to store cache files.",
         ),
     ] = Path(".vissho_cache"),
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Path to output file (.xlsx, .md, or .json determined by extension).",
+        ),
+    ] = None,
+    excel: Annotated[
+        Path | None,
+        typer.Option(
+            "--excel",
+            "-x",
+            help="Path to save slide analysis results as an Excel workbook (.xlsx).",
+        ),
+    ] = None,
+    markdown: Annotated[
+        Path | None,
+        typer.Option(
+            "--markdown",
+            "--md",
+            help="Path to save slide analysis results as a Markdown document (.md).",
+        ),
+    ] = None,
 ) -> None:
     """Analyze individual slide images (Phase 1) and cache intermediate results."""
     # 1. Load configuration
@@ -263,6 +336,15 @@ def analyze(
         f"\n[bold green]Analysis complete:[/bold green] {total_slides} slides "
         f"({cached_count} cached, {total_slides - cached_count} inferred) | "
         f"Total estimated duration: [bold]{total_est_minutes} minutes[/bold]"
+    )
+
+    # 5. Export slide analysis results if requested
+    _export_slide_analyses_outputs(
+        results=results,
+        output=output,
+        excel=excel,
+        markdown=markdown,
+        title=f"スライド解析結果: {config.prerequisites.purpose}",
     )
 
 
@@ -655,6 +737,52 @@ def preview(
     except Exception as e:
         console.print(f"[bold red]Failed to read plan JSON:[/bold red] {e}")
         raise typer.Exit(code=1)
+
+    if isinstance(data, list) and (len(data) == 0 or "analysis" in data[0] or "slide_number" in data[0]):
+        # Slide analyses preview & export
+        fmt = format.lower()
+        if fmt == "terminal":
+            table = Table(title="Slide Analysis Results (Phase 1)", show_header=True, header_style="bold magenta")
+            table.add_column("#", style="dim", width=4, justify="right")
+            table.add_column("Title", style="bold", width=26)
+            table.add_column("Topics", width=30)
+            table.add_column("Est. (min)", justify="right", width=10)
+            table.add_column("Notes", justify="right", width=6)
+            for item in data:
+                ana = item.get("analysis", {})
+                topics_str = ", ".join(ana.get("topics", [])[:3])
+                notes = item.get("supplementary_notes", []) or ana.get("instructor_notes", [])
+                table.add_row(
+                    str(item.get("slide_number", "")),
+                    ana.get("title", ""),
+                    topics_str,
+                    f"{ana.get('estimated_minutes', 0)} min",
+                    str(len(notes)) if notes else "-",
+                )
+            console.print()
+            console.print(table)
+            if output:
+                _export_slide_analyses_outputs(data, output=output)
+        elif fmt in ("markdown", "md"):
+            md_text = export_slide_analyses_to_markdown(data, output_path=output)
+            if output:
+                console.print(f"[bold green]Saved slide analyses Markdown to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+            else:
+                console.print(md_text)
+        elif fmt in ("excel", "xlsx"):
+            target_out = output or plan_path.with_suffix(".xlsx")
+            export_slide_analyses_to_excel(data, output_path=target_out)
+            console.print(f"[bold green]Saved slide analyses Excel workbook to:[/bold green] [cyan]{target_out.resolve()}[/cyan]")
+        elif fmt == "json":
+            json_text = export_slide_analyses_to_json(data, output_path=output)
+            if output:
+                console.print(f"[bold green]Saved slide analyses JSON to:[/bold green] [cyan]{output.resolve()}[/cyan]")
+            else:
+                console.print_json(json_text)
+        else:
+            console.print(f"[bold red]Unknown format:[/bold red] '{format}'.")
+            raise typer.Exit(code=1)
+        return
 
     if isinstance(data, dict) and "plan" in data and isinstance(data["plan"], dict):
         plan_dict = data["plan"]
